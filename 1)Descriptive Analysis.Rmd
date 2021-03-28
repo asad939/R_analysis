@@ -1,0 +1,1401 @@
+
+```{r}
+---
+title: "CaseStudy_Pharma"
+submission-date: "15/08/2020"
+output: html_document
+---
+```
+
+Problem description
+Pharmaceuticals for testing and treating HIV are shipped to many African countries regularly and in large quantities as part of health care projects launched by World Health Organisation,United Nations and other institutions. Thereby, two man groups of pharmaceuticals can be distinguished: 
+- HIV tests and 
+- HIV treatment drugs. 
+Both groups of pharmaceuticals comprise a bunch of different products offered by many different suppliers. 
+The data set "data_orders.xlsx" contains shipment data of HIV pharmaceuticals to 8 African countries over a time span of about 10 years. Each order is described by the destination (country), mode of transportation, INCOTERMS, pharmaceutical information, supplier as well as shipment size, volume, and value. Additionally, for some shipments transportation cost are given. A description of the data set can be found here https://www.kaggle.com/divyeshardeshana/supply-chain-shipment-pricing-data.
+
+Tasks
+1) Analyze the supply relations with respect to mode of transportation, INCOTERMs, delivery reliability (earliness/lateness), suppliers, transport cost. 
+2) Derive rough estimates of the transportation costs for each relation. 
+3) Analyze the demand distribution for both groups of pharmaceuticals in each country.
+4) Derive and solve a model to supply the African countries most costefficiently with the required pharmaceuticals by selecting proper lot sizes, suppliers and transport modes.
+
+******************************************************************************************************
+This R-File contains: 
+- First overview over the data
+- 1) Analyze Supply Relations (1.1 Transportation Mode, 1.2 INCOTERMs, 1.3 Reliability, 1.4 Suppliers, 1.5 Transport Cost)
+******************************************************************************************************
+
+```{r}
+' -----------  Installing and loading the needed package  ----------- '
+
+install.packages("car")
+install.packages("corrplot")
+install.packages("dplyr")
+install.packages("forecast")
+install.packages("ggcorrplot")
+install.packages("ggplot2")
+install.packages("gridExtra")
+install.packages("mice")
+install.packages("plotly")
+install.packages("readxl")
+install.packages("sjmisc")
+install.packages("stringr")
+install.packages("tidyr")
+install.packages("tidyverse")
+install.packages("GGally")
+install.packages("ggmap")
+install.packages("devtools")
+install.packages(c("maps","mapdata"))
+
+
+
+
+require(maps)
+require(viridisLite)
+theme_set(
+  theme_void()
+  )
+```
+
+```{r}
+library(car)
+library(corrplot)
+library(dplyr)
+library(forecast)
+library(ggcorrplot)
+library(ggplot2)
+library(gridExtra)
+library(mice)
+library(plotly)
+library(readxl)
+library(sjmisc)
+library(stringr)
+library(tidyr)
+library(tidyverse)
+library(GGally)
+library(ggmap)
+library(timeDate)
+library(maps)
+library(mapdata)
+library(devtools)
+```
+
+
+```{r}
+' -----------  Loading the dataframe  ----------- '
+
+data_orders_NA <- read_excel("Data & Report/data_orders_realNA.xlsx")
+data_orders <- read_excel("Data & Report/data_orders_w_new_variables.xlsx") #data set with extra variables for the dates of delivery and scheduled, reliability, estimated distance
+View(data_orders)
+View(data_orders_NA)
+```
+
+
+```{r}
+' -----------  Code the variables  ----------- '
+
+ID <- c(data_orders$ID)
+projectcode <- c(data_orders$`Project Code`)
+country <- c(data_orders$Country)
+vendorincoterm <- c(data_orders$`Vendor INCO Term`)
+shipmentmode <- c(data_orders$`Shipment Mode`)
+scheduleddeliverydate <- c(data_orders$`Scheduled Delivery Date2`)
+scheduleddeliveryyear <- c(data_orders$`Year SSD`)
+scheduleddelivermonth <- c(data_orders$`Month SSD`)
+scheduleddeliveryday <- c(data_orders$`Day SSD`) 
+sortedbydeliverydate <- c(data_orders$`Sorted by Delivery Date`)
+deliveryrecordeddate <- c(data_orders$`Delivery Recorded Date2`)
+deliveryrecordedyear <- c(data_orders$`Year DRD`)
+deliveryrecordedmonth <- c(data_orders$`Month DRD`)
+deliveryrecordedday <- c(data_orders$`Day DRD`)
+subclassification <- c(data_orders$`Sub Classification`)
+vendor <- c(data_orders$Vendor)
+itemdescription <- c(data_orders$`Item Description`)
+brand <- c(data_orders$Brand)
+unitofmeasure <- c(data_orders$`Unit of Measure (Per Pack)`)
+lineitemquantity <- c(data_orders$`Line Item Quantity`)
+lineitemvalue <- c(data_orders$`Line Item Value`)
+packprice <- c(data_orders$`Pack Price`)
+unitprice <- c(data_orders$`Unit Price`)
+demand <- c(data_orders$`Demanded Units (Pills or Tests)`) #added in excel (lineitemquantity * packprice)
+manufacturingsite <- c(data_orders$`Manufacturing Site` )
+manufacturingcountry <- c(data_orders$`Manufacturing Country`) # added manually in excel (according to man.site)
+estimatedminimaldistance <- c(data_orders$`Estimated Minimal Distance Manufacturing Country to Destination`) # added manually in excel
+weight_kl <- c(data_orders$`Weight (with reference of IDxxx)` ) #cleaned/expanded in excel
+weight_klNA <- c(data_orders$`Weight (with reference of IDxxx) NA`)
+weight_regressionbasedonly <- c(data_orders$`simplest regression applied on whole data set` )
+weight_regression <- c(data_orders$`Weight original + Regression (2245.156962+ 0.109744*lineitemquantity for drugs (q0.001)) & (499.719501971+0.138671589*lineitemquantity-4.826180831*unitofmeasure+0.003500737*lineitemvalue)`)
+weight_smoothedmeanonly <-c(data_orders$`Weight Estimated due to mean of similar demand (smoothed)` )
+weight_smoothedmean <-c(data_orders$`Weight original +  by mean of similiar`)
+freightcost <- c(data_orders$`Freight Cost (USD)`) #cleaned/expanded in excel
+freightcostNA <- c(data_orders$`Freight Cost (with reference of IDxxx) NA`)
+lineiteminsurance <- c(data_orders$`Line Item Insurance (USD)`)
+reliability <- c(data_orders$Reliability)
+
+
+
+
+dataset <- data.frame(ID, projectcode, country, vendorincoterm, shipmentmode, scheduleddeliverydate, scheduleddeliveryday, scheduleddelivermonth, scheduleddeliveryyear, sortedbydeliverydate, deliveryrecordeddate, deliveryrecordedday, deliveryrecordedmonth, deliveryrecordedyear, subclassification, vendor, itemdescription, brand, unitofmeasure, lineitemquantity, lineitemvalue, packprice, unitprice, demand, manufacturingsite, manufacturingcountry, estimatedminimaldistance, weight_kl, weight_klNA,  weight_regressionbasedonly,weight_regression, weight_smoothedmeanonly, weight_smoothedmean, freightcostNA, lineiteminsurance, reliability)
+```
+
+
+
+```{r}
+" -----------  Introduction World Map  ----------- "
+
+
+sum(is.na(data_orders))
+#212 detected missing values
+any(is.na(data_orders))
+
+#try manually change missing values to NA for initial missing values calculations
+data_orders$`Vendor INCO Term`[data_orders$`Vendor INCO Term`== "N/A - From RDC"]<-NA
+data_orders$`Shipment Mode`[data_orders$`Shipment Mode`== "N/A"]<-NA
+data_orders$`Weight (Kilograms)`[data_orders$`Weight (Kilograms)`== "Weight Captured Separately"]<-NA
+data_orders$`Freight Cost (USD)`[data_orders$`Freight Cost (USD)`== "Freight Included in Commodity Cost"]<-NA
+
+#now recalculate missing values
+any(is.na(data_orders))
+sum(is.na(data_orders))
+count(data_orders)
+
+6810*20
+7284/136200
+#53% (above 50% missing values)
+
+#cleaning missing values for initial introductory plan map
+na.omit(data_orders$`Shipment Mode`)
+
+str(data_orders$`Shipment Mode`)
+# Côte_dIvoire<-c(lon=7.5400, lat=5.5471) 
+# Mozambique<-c(lon=18.6657, lat=35.5296)
+# Nigeria<-c(lon=9.0820, lat=8.6753)
+# South_Africa<-c(lon=30.5595, lat=22.9375)
+# Tanzania<-c(lon=6.3690, lat=34.8888)
+# Uganda<-c(lon=1.3733, lat=32.2903)
+# Zambia<-c(lon=13.1339, lat=27.8493)
+# Zimbabwe<-c(lon=19.0154, lat=29.1549)
+
+world_map <- map_data("world")
+View(world.cities)
+ggplot(world_map, aes(x = long, y = lat, group = group)) + 
+  geom_polygon(fill = "pink", colour = "white")
+
+#African Countries on Demand
+some.african.countries <- c("Ivory Coast", "Mozambique", "Nigeria", "South Africa", "Tanzania", "Uganda", "Zambia", "Zimbabwe")
+
+#Retrieve the map data
+some.african.maps <- map_data("world", region = some.african.countries)
+
+#Computing centroid as the mean longitude and latitude
+#Used as label coordinate for country's names
+region.lab.data <- some.african.maps %>%
+  group_by(region) %>%
+  summarise(long = mean(long), lat = mean(lat))
+
+###Visualize
+
+ggplot(some.african.maps, aes(x = long, y = lat)) +
+  geom_polygon(aes(group = group, fill = region)) +
+  geom_text(aes(label = region), data = region.lab.data, size = 3, hjust = 0.5)+
+  scale_fill_viridis_d()+
+  theme_void()+
+  theme(legend.position = "none")
+
+
+```
+
+
+```{r}
+' -----------------------------  First Overview Data  ------------------------------ '
+
+summary(data_orders)
+data_orders %>% count(data_orders$Country)
+country_count <- as.data.frame(data_orders %>% count(data_orders$Country))
+
+names(country_count)[1] <- "Country"
+country_count
+pie(country_count$n, labels=country_count$Country, main="Recipient Countries of Deliveries", border="white", col=rainbow(8))
+country_count_percentage <- round((100*country_count$n/sum(country_count$n)), 2)
+country_count_percentage
+pie(country_count$n, labels=country_count_percentage, main="Percentage recipient Countries of Deliveries", border="white", col = rainbow(8))
+legend("topright", country_count$Country, cex=0.8, fill=rainbow(8))
+
+#Deliveries per Country, percentage of pill&test deliveries of overall african deliveries
+Southafrica <- filter(data_orders, data_orders$Country =="South Africa")  # South Africa=1406
+Nigeria <- filter(data_orders, data_orders$Country=="Nigeria")            # Nigeria=1177
+Cotedivoire <- filter(data_orders, data_orders$Country=="Côte d'Ivoire")  # Côte d'Ivoire=1077
+Uganda <- filter(data_orders, data_orders$Country=="Uganda")              # Uganda=779
+Zambia <- filter(data_orders, data_orders$Country=="Zambia")              # Zambia=683
+Mozambique <- filter(data_orders, data_orders$Country=="Mozambique")      # Mozambique=631
+Zimbabwe <- filter(data_orders, data_orders$Country=="Zimbabwe")          # Zimbabwe=538
+Tanzania <- filter(data_orders, data_orders$Country=="Tanzania")          # Tanzania=519
+Southafrica
+Nigeria
+Cotedivoire
+Uganda
+Zambia
+Mozambique
+Zimbabwe
+Tanzania
+#figure 2: Number of Deliveries per Country from 2005 to 2016
+ggplot(mutate(data_orders, Country = fct_infreq(Country))) + geom_bar(aes(x = Country), fill=rainbow(8)) + ggtitle("Number of Deliveries per Country from 2005 to 2016") + ylab("Number of Deliveries")  + theme(text = element_text(size=30))
+
+
+
+' -------------------------------  Subclassification  ------------------------------- '
+#Demand according to Sub-Classification
+filter(data_orders, data_orders$`Sub Classification`=="Adult") #6,038 deliveries of pills=88.66%
+filter(data_orders, data_orders$`Sub Classification`=="HIV test") #772 deliveries of tests=11.34%
+HIVdrugs <- filter(data_orders, data_orders$`Sub Classification`=="Adult")
+HIVtests <- filter(data_orders, data_orders$`Sub Classification`=="HIV test")
+sum(HIVdrugs$`Demanded Units (Pills or Tests)`) #8,179,142,268 pills delivered
+sum(HIVtests$`Demanded Units (Pills or Tests)`) #169,342,432 tests delivered
+mean(HIVdrugs$`Line Item Quantity`) #25784.39 packs on average per delivery
+mean(HIVdrugs$`Demanded Units (Pills or Tests)`) #1354611 pills on average per delivery
+mean(HIVtests$`Line Item Quantity`) #3529.006
+mean(HIVtests$`Demanded Units (Pills or Tests)`)
+
+#figure 1: Subclassification Count
+ggplot(data_orders) + geom_bar(aes(x =`Sub Classification` , fill = `Sub Classification`)) + scale_fill_manual(values = c("blue", "green")) + theme(text = element_text(size=20))
+#Country per Subclassification Count
+ggplot(mutate(data_orders, Country = fct_infreq(Country))) + geom_bar(aes(x =country , fill = subclassification)) + scale_fill_manual(values = c("blue", "green")) + theme(text = element_text(size=23))
+#figure 5: Linitemvalue per country per Subclassification
+ggplot(mutate(data_orders, Country = fct_infreq(Country)), aes(x=Country, y=`Line Item Value`,fill= `Sub Classification`)) + geom_bar(stat="identity", position=position_dodge()) + scale_fill_manual(values = c("blue", "green")) + theme(text = element_text(size=25))
+
+
+
+' -------------------------------  Order/Pack sizes  ------------------------------- '
+#figure 11
+#Making a new dataframe with only numerical variables
+nums <- select_if(data_orders, is.numeric)
+col <- colorRampPalette(c("#BB4444", "#EE9988", "#FFFFFF", "#77AADD", "#4477AA"))
+corr_simple <- function(data=df,sig=0.5){
+  df_cor <- data %>% mutate_if(is.character, as.factor)
+  df_cor <- df_cor %>% mutate_if(is.factor, as.numeric)
+  #Calcule de la correlation
+  corr <- cor(df_cor)
+  #préparation    
+  corr[lower.tri(corr,diag=TRUE)] <- NA 
+  #Conversion en table
+  corr <- as.data.frame(as.table(corr))
+  #Suprresion des valeurs NA
+  corr <- na.omit(corr) 
+  #Selection des valeurs significatives
+  corr <- subset(corr, abs(Freq) > sig) 
+  #Classement en ordre décroissant
+  corr <- corr[order(-abs(corr$Freq)),] 
+  #Affiche de la table du classement
+  print(corr)
+  #Préparation pour le dessin
+  mtx_corr <- reshape2::acast(corr, Var1~Var2, value.var="Freq")
+  #Dessin de la matrice de correlation
+  corr <-round(mtx_corr, 5)
+  corrplot(mtx_corr, type = "upper", tl.pos = "td",
+           method = "color",col=col(500), tl.cex = 0.5,  tl.col = 'black',
+           addCoef.col = "black",is.corr=FALSE,  na.label=" ",number.cex=0.5)
+}
+corr_simple(nums)
+#figure 13 Unit of Measure vs Line Item Quantity
+plot(nums$`Unit of Measure (Per Pack)`,nums$`Line Item Quantity`)
+
+#figure 4 Line Item Value per country
+ggplot(data_orders, aes( x =`Line Item Value`, y= Country)) + geom_boxplot() + theme(text = element_text(size=25))
+
+#figure 6 Line Item Value per country
+data_orders$year = str_sub(data_orders$`Delivery Recorded Date`,-2,-1)
+data_orders$year <- sub("^", "20", data_orders$year)
+ggplot(mutate(data_orders, Country = fct_infreq(Country)), aes(x=Country, y=`Line Item Value`,fill= `year`)) +
+  geom_bar(stat="identity", position=position_dodge()) + theme(text = element_text(size=25))
+
+
+' -------------------------------  Lineitemvalue  ------------------------------- '
+#figure 3: Linitemvalue per Country
+tapply(data_orders$`Line Item Value`,data_orders$Country,  mean )
+```
+
+
+
+
+```{r}
+
+' -----------  Investigate in missing values (to be treaten in later R files)  ----------- '
+
+
+is.na(data_orders_NA)
+#If missing data for a variable is more than 5% then you probably should leave that feature or sample out. 
+sapply(data_orders_NA, function(x) sum(is.na(x)))
+#Shipment Mode: 330 NA = 4.85% (no problem, can stay as it is)(used MICE Imputation)
+#Line Item Insurance (USD): 212 NA = 3.11% (no problem, can stay as it is)
+#Vendor INCO Term: 4102 NA = 60.23% - we have to do something
+#Weight (Kilograms): 2697 NA = 39.6% - we have to do something
+#Freight Cost (USD): 2871 NA = 42.16% - we have to do something
+
+#after replacing references (e.g. see ID#2931), we have less missing values
+sapply(data_orders, function(x) sum(is.na(x)))
+#Freight costs: 1462 NA = 21.47%
+#Weight: 1307 NA = 19.19%
+
+#18 "important" variables -> 18*6810=122,580 observations -> 10,212 missing values = 8,3% of important data
+```
+
+
+
+#1.1) Analyze Supply Relations towards: Mode of Transportation
+```{r}
+' -----------  Supply Relations towards: Mode of Transportation  ----------- '
+
+
+' -----------  Overview Use of Modes of Transportation  ----------- '
+
+shipmentmodes_count <- data_orders %>% count(data_orders$`Shipment Mode`)
+names(shipmentmodes_count)[1] <- "Shipment Mode"
+shipmentmodes_count
+shipmentmodes_percentage <- 100*(data_orders %>% count(data_orders$`Shipment Mode`))$n/sum((data_orders %>% count(data_orders$`Shipment Mode`))$n)
+shipmentmodes_percentage_df <- data.frame("ShipmentMode"=shipmentmodes_count$`Shipment Mode`,"TotalNumberPerShipmentMode"=shipmentmodes_count$n, "PercentagePerShipmentMode"=shipmentmodes_percentage)
+shipmentmodes_percentage_df
+
+#figure 9: Shipmentmode count
+ggplot(mutate(data_orders)) + geom_bar(aes(x = shipmentmode, fill = shipmentmode)) + scale_fill_manual(values = c("red", "yellow", "green", "blue", "purple")) + theme(text = element_text(size=20))
+#figure 10: Shipmentmode per Country
+ggplot(mutate(data_orders)) + geom_bar(aes(x = Country, fill = shipmentmode)) + scale_fill_manual(values = c("red", "yellow", "green", "blue", "purple"))+ theme(text = element_text(size=20))
+
+Southafrica <- filter(data_orders, data_orders$Country =="South Africa")  # South Africa=1406
+Nigeria <- filter(data_orders, data_orders$Country=="Nigeria")            # Nigeria=1177
+Cotedivoire <- filter(data_orders, data_orders$Country=="Côte d'Ivoire")  # Côte d'Ivoire=1077
+Uganda <- filter(data_orders, data_orders$Country=="Uganda")              # Uganda=779
+Zambia <- filter(data_orders, data_orders$Country=="Zambia")              # Zambia=683
+Mozambique <- filter(data_orders, data_orders$Country=="Mozambique")      # Mozambique=631
+Zimbabwe <- filter(data_orders, data_orders$Country=="Zimbabwe")          # Zimbabwe=538
+Tanzania <- filter(data_orders, data_orders$Country=="Tanzania")          # Tanzania=519
+Southafrica
+Nigeria
+Cotedivoire
+Uganda
+Zambia
+Mozambique
+Zimbabwe
+Tanzania
+
+Southafrica_count_shipmentmodes <- Southafrica %>% count(Southafrica$`Shipment Mode`) #Air	230			N/A	42			Ocean	229			Truck	905	
+names(Southafrica_count_shipmentmodes) [1] <- "Shipment Mode"
+Southafrica_percentages_shipmentmodes <- 100*(Southafrica_count_shipmentmodes$n)/sum(Southafrica_count_shipmentmodes$n)
+Southafrica_shipmentmodes <- data.frame("Southafrica"=Southafrica_count_shipmentmodes$`Shipment Mode` , "Total Number"=Southafrica_count_shipmentmodes$n, "Percentages"=Southafrica_percentages_shipmentmodes)
+names(Southafrica_count_shipmentmodes)[1] <- "Southafrica"
+Southafrica_shipmentmodes
+
+Nigeria_count_shipmentmodes <- Nigeria %>% count(Nigeria$`Shipment Mode`)
+names(Nigeria_count_shipmentmodes) [1] <- "Shipment Mode"
+Nigeria_percentages_shipmentmodes <- 100*(Nigeria_count_shipmentmodes$n)/sum(Nigeria_count_shipmentmodes$n)
+Nigeria_shipmentmodes <- data.frame("Nigeria"=Nigeria_count_shipmentmodes$`Shipment Mode`, "Total Number"=Nigeria_count_shipmentmodes$n, "Percentages"=Nigeria_percentages_shipmentmodes)
+names(Nigeria_shipmentmodes)[1] <- "Nigeria"
+Nigeria_shipmentmodes
+
+Cotedivoire_count_shipmentmodes <- Cotedivoire %>% count(Cotedivoire$`Shipment Mode`)
+names(Cotedivoire_count_shipmentmodes) [1] <- "Shipment Mode"
+Cotedivoire_percentages_shipmentmodes <- 100*(Cotedivoire_count_shipmentmodes$n)/sum(Cotedivoire_count_shipmentmodes$n)
+Cotedivoire_shipmentmodes <- data.frame("Cotedivoire"= Cotedivoire_count_shipmentmodes$`Shipment Mode`, "Total Number"=Cotedivoire_count_shipmentmodes$n, "Percentages"=Cotedivoire_percentages_shipmentmodes)
+names(Cotedivoire_shipmentmodes)[1] <- "Cotedivoire"
+Cotedivoire_shipmentmodes
+
+Uganda_count_shipmentmodes <- Uganda %>% count(Uganda$`Shipment Mode`)
+names(Uganda_count_shipmentmodes) [1] <- "Shipment Mode"
+Uganda_percentages_shipmentmodes <- 100*(Uganda_count_shipmentmodes$n)/sum(Uganda_count_shipmentmodes$n)
+Uganda_shipmentmodes <- data.frame("Uganda"=Uganda_count_shipmentmodes$`Shipment Mode`, "Total Number"=Uganda_count_shipmentmodes$n, "Percentages"=Uganda_percentages_shipmentmodes)
+names(Uganda_shipmentmodes)[1] <- "Uganda"
+Uganda_shipmentmodes
+
+Zambia_count_shipmentmodes <- Zambia %>% count(Zambia$`Shipment Mode`)
+names(Zambia_count_shipmentmodes) [1] <- "Shipment Mode"
+Zambia_percentages_shipmentmodes <- 100*(Zambia_count_shipmentmodes$n)/sum(Zambia_count_shipmentmodes$n)
+Zambia_shipmentmodes <- data.frame("Zambia"=Zambia_count_shipmentmodes$`Shipment Mode`, "Total Number"=Zambia_count_shipmentmodes$n, "Percentages"=Zambia_percentages_shipmentmodes)
+names(Zambia_shipmentmodes)[1] <- "Zambia"
+Zambia_shipmentmodes
+
+Mozambique_count_shipmentmodes <- Mozambique %>% count(Mozambique$`Shipment Mode`)
+names(Mozambique_count_shipmentmodes) [1] <- "Shipment Mode"
+Mozambique_percentages_shipmentmodes <- 100*(Mozambique_count_shipmentmodes$n)/sum(Mozambique_count_shipmentmodes$n)
+Mozambique_shipmentmodes <- data.frame("Mozambique"=Mozambique_count_shipmentmodes$`Shipment Mode`, "Total Number"=Mozambique_count_shipmentmodes$n, "Percentages"=Mozambique_percentages_shipmentmodes)
+names(Mozambique_shipmentmodes)[1] <- "Mozambique"
+Mozambique_shipmentmodes
+
+Zimbabwe_count_shipmentmodes <- Zimbabwe %>% count(Zimbabwe$`Shipment Mode`)
+names(Zimbabwe_count_shipmentmodes) [1] <- "Shipment Mode"
+Zimbabwe_percentages_shipmentmodes <- 100*(Zimbabwe_count_shipmentmodes$n)/sum(Zimbabwe_count_shipmentmodes$n)
+Zimbabwe_shipmentmodes <- data.frame("Zimbabwe"=Zimbabwe_count_shipmentmodes$`Shipment Mode`, "Total Number"=Zimbabwe_count_shipmentmodes$n, "Percentages"=Zimbabwe_percentages_shipmentmodes)
+names(Zimbabwe_shipmentmodes)[1] <- "Zimbabwe"
+Zimbabwe_shipmentmodes
+
+Tanzania_count_shipmentmodes <- Tanzania %>% count(Tanzania$`Shipment Mode`)
+names(Tanzania_count_shipmentmodes) [1] <- "Shipment Mode"
+Tanzania_percentages_shipmentmodes <- 100*(Tanzania_count_shipmentmodes$n)/sum(Tanzania_count_shipmentmodes$n)
+Tanzania_shipmentmodes <- data.frame("Tanzania"=Tanzania_count_shipmentmodes$`Shipment Mode`, "Total Number"=Tanzania_count_shipmentmodes$n, "Percentages"=Tanzania_percentages_shipmentmodes)
+names(Tanzania_shipmentmodes)[1] <- "Tanzania"
+Tanzania_shipmentmodes
+
+
+' -----------  Mode of Transport - Change over Time  ----------- '
+
+# For every mode of transport: usage per year
+sum((data_orders %>% count(data_orders$`Shipment Mode`))$n) #6810 deliveries in total
+Usageperyear_count <- data_orders %>% count(data_orders$`Year DRD`)
+names(Usageperyear_count)[1] <- "Years of Deliveries from 2006-2015"
+Usageperyear_count
+
+Air <- filter(data_orders, data_orders$`Shipment Mode`=="Air")
+AirCharter <- filter(data_orders, data_orders$`Shipment Mode`=="Air Charter")
+data_orders$`Shipment Mode`[data_orders$`Shipment Mode`== "N/A"] <- NA
+NA_Shipment <- filter(data_orders, is.na(data_orders$`Shipment Mode`))
+Ocean <- filter(data_orders, data_orders$`Shipment Mode`=="Ocean")
+Truck <- filter(data_orders, data_orders$`Shipment Mode`=="Truck")
+
+Air_usageperyear_count <- Air %>% count(Air$`Year DRD`)
+names(Air_usageperyear_count)[1] <- "Years from 2006 to 2015"
+names(Air_usageperyear_count)[2] <- "Deliveries per Air"
+Air_usageperyear_count
+ggplot(Air_usageperyear_count, mapping=aes(x=Air_usageperyear_count$`Years from 2006 to 2015`, y=Air_usageperyear_count$`Deliveries per Air`))+ geom_point() + geom_path()+ labs(x="Years from 2006 to 2015", y="Number of Deliveries per Air", title="Deliveries per Air according to the years")+ scale_x_continuous(breaks=c(5:16))
+Air_usageperyear_percentage <- Air_usageperyear_count$`Deliveries per Air`/Usageperyear_count$
+Air_usageperyear_percentage
+Air_usageperyear_percentage <- data.frame("Years from 2006 to 2015"=c(Air_usageperyear_count$`Years from 2006 to 2015`), "Percentage of overall Transportation"=c(Air_usageperyear_count$`Deliveries per Air`/Usageperyear_count$n))
+Air_usageperyear_percentage
+Air1 <- ggplot(Air_usageperyear_percentage, mapping=aes(x=Air_usageperyear_percentage$Years.from.2006.to.2015, y=Air_usageperyear_percentage$Percentage.of.overall.Transportation))+ geom_point() + geom_path()+ labs(x="Years from 2006 to 2015", y="Percentage of Deliveries per Air", title="Deliveries per Air according to the years") + scale_x_continuous(breaks=c(5:16))
+Air1
+
+AirCharter_usageperyear_count <- AirCharter %>% count(AirCharter$`Year DRD`)
+AirCharter_usageperyear_count
+
+NA_Shipment_usageperyear_count <- NA_Shipment %>% count(NA_Shipment$`Year DRD`)
+NA_Shipment_usageperyear_count 
+#NA Shipments are only in early years!
+
+Ocean_usageperyear_count <- Ocean %>% count(Ocean$`Year DRD`)
+Ocean_usageperyear_count
+Truck_usageperyear_count <- Truck %>% count(Truck$`Year DRD`)
+Truck_usageperyear_count
+
+#following Air_usageperyear_count$`Years from 2006 to 2015` as contains NA (from 31.04.2020) thus is not working
+Usagesperyear_count <- data.frame("Years from 2006 to 2015"= Air_usageperyear_count$`Years from 2006 to 2015`, "Deliveries by Air"=Air_usageperyear_count$`Deliveries per Air`, "Deliveries by AirCharter"=c(0,0,0,AirCharter_usageperyear_count$n), "Deliveries by unknown Mode of Transport"=c(NA_Shipment_usageperyear_count$n,0,0,0,0,0,0,0), "Deliveries by Ocean"=c(0,0,0,Ocean_usageperyear_count$n,0), "Deliveries by Truck"=c(0,Truck_usageperyear_count$n)) 
+Usagesperyear_count
+
+Usagesperyear_percentages <- data.frame("Years from 2006 to 2015"= Usagesperyear_count$Years.from.2006.to.2015, "Percentage of deliveries by Air"= Usagesperyear_count$Deliveries.by.Air/Usageperyear_count$n, "Percentage of deliveries by AirCharter"= Usagesperyear_count$Deliveries.by.AirCharter/Usageperyear_count$n, "Percentage of deliveries by unknown Mode of Transport"= Usagesperyear_count$Deliveries.by.unknown.Mode.of.Transport/Usageperyear_count$n,"Percentage of deliveries by Ocean"= Usagesperyear_count$Deliveries.by.Ocean/Usageperyear_count$n, "Percentage of deliveries by Truck"=Usagesperyear_count$Deliveries.by.Truck/Usageperyear_count$n)
+Usagesperyear_percentages
+
+
+ggplot(Usagesperyear_percentages, aes(x=as.factor(Years.from.2006.to.2015))) + labs(x="Years from 2006 to 2015", y="Percentage of Shipment Modes over all Deliveries", title="Usage of modes of transportation in relation to time") + geom_line(data=Usagesperyear_percentages, aes(x=Years.from.2006.to.2015, y=Percentage.of.deliveries.by.Air, color="Air"), fill="red") + 
+geom_point(data=Usagesperyear_percentages, aes(x=Years.from.2006.to.2015, y=Percentage.of.deliveries.by.Air, color="Air"), col="red") + 
+geom_line(data=Usagesperyear_percentages, aes(x=Years.from.2006.to.2015, y=Percentage.of.deliveries.by.AirCharter, color="AirCharter"), fill="yellow") + geom_point(data=Usagesperyear_percentages, aes(x=Years.from.2006.to.2015, y=Percentage.of.deliveries.by.AirCharter, color="AirCharter"), col="yellow") + 
+geom_line(data=Usagesperyear_percentages, aes(x=Years.from.2006.to.2015, y=Percentage.of.deliveries.by.unknown.Mode.of.Transport, color="Unknown Mode of Transport")) + geom_point(data=Usagesperyear_percentages, aes(x=Years.from.2006.to.2015, y=Percentage.of.deliveries.by.unknown.Mode.of.Transport, color="Unknown Mode of Transport")) + geom_line(data=Usagesperyear_percentages, aes(x=Years.from.2006.to.2015, y=Percentage.of.deliveries.by.Ocean, color="Ocean")) + geom_point(data=Usagesperyear_percentages, aes(x=Years.from.2006.to.2015, y=Percentage.of.deliveries.by.Ocean, color="Ocean")) + geom_line(data=Usagesperyear_percentages, aes(x=Years.from.2006.to.2015, y=Percentage.of.deliveries.by.Truck, color="Truck")) + geom_point(data=Usagesperyear_percentages, aes(x=Years.from.2006.to.2015, y=Percentage.of.deliveries.by.Truck, color="Truck")) + scale_x_continuous(breaks = c(2006:2015), labels = factor(2006:2015), limits = c(2006,2015)) + theme(text = element_text(size=20)) + scale_colour_manual(values = c("red", "yellow", "blue", "purple", "green"))
+#Delivery by Ocean seems to be used only in 2011+2015
+#Upwards trend Truck
+#Downwards trend Air
+#Aircharter usage is stable at a low level
+#NA from 2006-2009
+
+
+
+
+
+
+' -----------  Mode of Transportation regarding the INCO terms  ----------- '
+
+#Total Number & Percentage of INCO-Terms per Mode of Transportation
+data_orders %>% count(data_orders$`Vendor INCO Term`) #CIF=1;	CIP=128; DAP=5; DDP=1424;	DDU=4;	EXW=952;	FCA=194;	N/A From RDC=4102	
+
+Air_inco_count <- Air %>% count(Air$`Vendor INCO Term`)
+names(Air_inco_count) [1] ="INCO"
+Air_inco_percentage_single <- 100*Air_inco_count$n/sum(Air_inco_count$n)
+Air_inco_percentage_single
+Air_inco_percentage <- data.frame("Air"=Air_inco_count$INCO, "TotalNumber"=Air_inco_count$n, "Percentage"=Air_inco_percentage_single)
+Air_inco_percentage #EXW	31%, NA  48%	
+
+Aircharter_inco_count <- AirCharter %>% count(AirCharter$`Vendor INCO Term`)
+names(Aircharter_inco_count) [1] ="INCO"
+Aircharter_inco_percentage_single <- 100*Aircharter_inco_count$n/sum(Aircharter_inco_count$n)
+Aircharter_inco_percentage <- data.frame("Aircharter"=Aircharter_inco_count$INCO, "TotalNumber"=Aircharter_inco_count$n, "Percentage"=Aircharter_inco_percentage_single)
+Aircharter_inco_percentage # EXW	3%,	NA	97%
+
+NA_Shipment_inco_count <- NA_Shipment %>% count(NA_Shipment$`Vendor INCO Term`)
+names(NA_Shipment_inco_count) [1] ="INCO"
+NA_Shipment_inco_percentage_single <- 100*NA_Shipment_inco_count$n/sum(NA_Shipment_inco_count$n)
+NA_Shipment_inco_percentage <- data.frame("NA_Shipment"=NA_Shipment_inco_count$INCO, "TotalNumber"=NA_Shipment_inco_count$n, "Percentage"=NA_Shipment_inco_percentage_single)
+NA_Shipment_inco_percentage
+
+Ocean_inco_count <- Ocean %>% count(Ocean$`Vendor INCO Term`)
+names(Ocean_inco_count) [1] ="INCO"
+Ocean_inco_percentage_single <- 100*Ocean_inco_count$n/sum(Ocean_inco_count$n)
+Ocean_inco_percentage <- data.frame("Ocean"=Ocean_inco_count$INCO, "TotalNumber"=Ocean_inco_count$n, "Percentage"=Ocean_inco_percentage_single)
+Ocean_inco_percentage #DDP	88%
+
+Truck_inco_count <- Truck %>% count(Truck$`Vendor INCO Term`)
+names(Truck_inco_count) [1] ="INCO"
+Truck_inco_percentage_single <- 100*Truck_inco_count$n/sum(Truck_inco_count$n)
+Truck_inco_percentage <- data.frame("Truck"=Truck_inco_count$INCO, "TotalNumber"=Truck_inco_count$n, "Percentage"=Truck_inco_percentage_single)
+Truck_inco_percentage #DDP	34%, NA  66%
+
+#Total Number of Mode of Transportation per INCO-Terms
+CIF	<- filter(data_orders, data_orders$`Vendor INCO Term`=="CIF")
+CIF %>% count(CIF$`Shipment Mode`)
+CIP	<- filter(data_orders, data_orders$`Vendor INCO Term`=="CIP")
+CIP %>% count(CIP$`Shipment Mode`)
+DAP	<- filter(data_orders, data_orders$`Vendor INCO Term`=="DAP")
+DAP %>% count(DAP$`Shipment Mode`)
+DDP	<- filter(data_orders, data_orders$`Vendor INCO Term`=="DDP")
+DDP %>% count(DDP$`Shipment Mode`)
+DDU	<- filter(data_orders, data_orders$`Vendor INCO Term`=="DDU")
+DDU %>% count(DDU$`Shipment Mode`)
+EXW	<- filter(data_orders, data_orders$`Vendor INCO Term`=="EXW")
+EXW %>% count(EXW$`Shipment Mode`)
+FCA	<- filter(data_orders, data_orders$`Vendor INCO Term`=="FCA")
+FCA %>% count(FCA$`Shipment Mode`)
+NA_INCO <- filter(data_orders, data_orders$`Vendor INCO Term`=="N/A - From RDC") 
+NA_INCO %>% count(NA_INCO$`Shipment Mode`)
+barplot(Air_inco_count$n, main="Air - INCO", names.arg=Air_inco_count$INCO) #problem: legend excludes "NA"
+barplot(Air_inco_count$n, main="Air - INCO", names.arg=c("CIF", "CIP","DAP", "DDP", "DDU", "EXW", "FCA", "N/A"), col = rainbow(8))
+
+
+
+g0 <- ggplot(Air_inco_count, aes(x=`INCO`, y=`n`)) + geom_bar(stat = "identity", fill=c("pink","orange", "red", "green","#33FFFF", "blue", "purple", "#FF33CC")) +ggtitle("Air - INCO") + xlab("INCO Terms") + ylab("Count") + theme(text = element_text(size=20))
+g1 <- ggplot(Aircharter_inco_count, aes(x=`INCO`, y=`n`)) + geom_bar(stat = "identity", fill=c("blue", "#FF33CC")) +ggtitle("Aircharter - INCO") + xlab("INCO Terms") + ylab("Count") + theme(text = element_text(size=20))
+g2 <- ggplot(NA_Shipment_inco_count, aes(x=`INCO`, y=`n`)) + geom_bar(stat = "identity", fill=c("orange", "green", "#33FFFF" ,"#FF33CC")) +ggtitle("Unknown Mode of Shipment - INCO") + xlab("INCO Terms") + ylab("Count") + theme(text = element_text(size=20))
+g3 <- ggplot(Ocean_inco_count, aes(x=`INCO`, y=`n`)) + geom_bar(stat = "identity", fill=c("green", "blue", "purple" ,"#FF33CC")) +ggtitle("Ocean - INCO") + xlab("INCO Terms") + ylab("Count") + theme(text = element_text(size=20))
+g4 <- ggplot(Truck_inco_count, aes(x=`INCO`, y=`n`)) + geom_bar(stat = "identity", fill=c("green", "#FF33CC")) +ggtitle("Truck - INCO") + xlab("INCO Terms") + ylab("Count") + theme(text = element_text(size=20))
+#barplot(Air_inco_count$n, main="Air - INCO", names.arg=c("CIF", "CIP","DAP", "DDP", "DDU", "EXW", "FCA", "N/A"), col = rainbow(8))
+#barplot(NA_Shipment_inco_count$n, main="Unclear Mode of Shipment - INCO", col=c("orange", "green", "#33FFFF" ,"#FF33CC"), names.arg=NA_Shipment_inco_count$INCO)
+#barplot(Ocean_inco_count$n, main="Ocean - INCO", col=c("green", "blue", "purple" ,"#FF33CC"), names.arg=Ocean_inco_count$INCO)
+#barplot(Truck_inco_count$n, main="Truck - INCO", col=c("green", "#FF33CC"), names.arg=Truck_inco_count$INCO)
+grid.arrange(g0, g1, g3, g4, g2)
+
+
+
+
+
+
+' -----------  Mode of Transportation regarding Sub Classification  ----------- '
+
+HIVdrugs # 6,038 observations
+HIVtests # 772 observations
+
+HIVdrugs_count <- HIVdrugs %>% count(HIVdrugs$`Shipment Mode`)
+names(HIVdrugs_count) [1] <- "Shipment Mode"
+HIVdrugs_percentages <- 100*HIVdrugs_count$n/sum(HIVdrugs_count$n)
+pie(HIVdrugs_count$n, labels=round(HIVdrugs_percentages, 2), main="Modes of Transport for HIV drugs in Percentage", border="white", col = rainbow(5), cex=1.1)
+legend(.9, .6, legend=HIVdrugs_count$`Shipment Mode`, cex=1.1, fill=rainbow(5))
+
+HIVtests_count <- HIVtests %>% count(HIVtests$`Shipment Mode`)
+names(HIVtests_count) [1] <- "Shipment Mode"
+HIVtests_percentages <- 100*HIVtests_count$n/sum(HIVtests_count$n)
+pie(HIVtests_count$n, labels=round(HIVtests_percentages, 2), main="Modes of Transport for HIV tests in Percentage", border="white", col = rainbow(4), cex=1.1)
+legend(1.2, .6, legend=HIVtests_count$`Shipment Mode`, cex=1.1, fill=rainbow(4))
+
+#Analysis trend use of Shipment Modes -> could be beneficial for the model later
+f1 <- ggplot(Usagesperyear_percentages,mapping=aes(y=Usagesperyear_percentages$Percentage.of.deliveries.by.Air, x=Usagesperyear_percentages$Years.from.2006.to.2015)) + geom_point() + geom_line() + labs(x="Years from 2006 to 2015", y="Percentage of Shipments via Air", title="Linear Regression Deliveries via Air") + ylim(c(0,1)) + scale_x_continuous(breaks = c(2006:2015), labels = factor(2006:2015), limits = c(2006,2015)) + geom_smooth(method=lm, col="red") 
+f2 <- ggplot(Usagesperyear_percentages,mapping=aes(y=Usagesperyear_percentages$Percentage.of.deliveries.by.AirCharter, x=Usagesperyear_percentages$Years.from.2006.to.2015)) + geom_point() + geom_line() + labs(x="Years from 2006 to 2015", y="Percentage of Shipments via Air Charter", title="Linear Regression Deliveries via Air Charter") + ylim(c(0,1)) + scale_x_continuous(breaks = c(2006:2015), labels = factor(2006:2015), limits = c(2006,2015)) + geom_smooth(method=lm, col="yellow")
+f3 <- ggplot(Usagesperyear_percentages,mapping=aes(y=Usagesperyear_percentages$Percentage.of.deliveries.by.unknown.Mode.of.Transport, x=Usagesperyear_percentages$Years.from.2006.to.2015)) + geom_point() + geom_line() + labs(x="Years from 2006 to 2015", y="Percentage of Shipments via unknown Modes", title="Linear Regression Deliveries via unknown Shipment Modes") + ylim(c(0,1)) + scale_x_continuous(breaks = c(2006:2015), labels = factor(2006:2015), limits = c(2006,2015)) + geom_smooth(method=lm, col="green")
+f4 <- ggplot(Usagesperyear_percentages,mapping=aes(y=Usagesperyear_percentages$Percentage.of.deliveries.by.Ocean, x=Usagesperyear_percentages$Years.from.2006.to.2015)) + geom_point() + geom_line() + labs(x="Years from 2006 to 2015", y="Percentage of Shipment via Ocean", title="Linear Regression Deliveries via Ocean") + ylim(c(0,1)) + scale_x_continuous(breaks = c(2006:2015), labels = factor(2006:2015), limits = c(2006,2015)) + geom_smooth(method=lm,  col="blue")
+f5<- ggplot(Usagesperyear_percentages,mapping=aes(y=Usagesperyear_percentages$Percentage.of.deliveries.by.Truck, x=Usagesperyear_percentages$Years.from.2006.to.2015)) + geom_point() + geom_line() + labs(x="Years from 2006 to 2015", y="Percentage of Shipment via Truck", title="Linear Regression Deliveries via Truck")+ ylim(c(0,1)) + scale_x_continuous(breaks = c(2006:2015), labels = factor(2006:2015), limits = c(2006,2015)) + geom_smooth(method=lm,  col="purple")
+grid.arrange(f1,f2,f3,f4,f5)
+
+
+#not exact, only an ROUGH approximation of an Forecast
+f_Air <- forecast(Usagesperyear_percentages$Percentage.of.deliveries.by.Air)
+autoplot(f_Air, main="Forecast percentage deliveries by Air")
+f_AirCharter <- forecast(Usagesperyear_percentages$Percentage.of.deliveries.by.AirCharter)
+autoplot(f_AirCharter, main="Forecast percentage deliveries by AirCharter")
+f_unknown_Mode_of_Transport <- forecast(Usagesperyear_percentages$Percentage.of.deliveries.by.unknown.Mode.of.Transport)
+autoplot(f_unknown_Mode_of_Transport, main="Forecast percentage deliveries by Unknown Mode of Transportation")
+f_Ocean <- forecast(Usagesperyear_percentages$Percentage.of.deliveries.by.Ocean)
+autoplot(f_Ocean, main="Forecast percentage deliveries by Ocean")
+f_Truck <- forecast(Usagesperyear_percentages$Percentage.of.deliveries.by.Truck)
+autoplot(f_Truck, main="Forecast percentage deliveries by Trucks")
+
+
+```
+
+
+
+#1.2) Analyze Supply Relations towards: INCOTERMs
+```{r}
+' -----------  Supply Relations towards: INCOTERMs  ----------- '
+
+
+#figure 7 INCO Count
+No_NA_for_INCO <-filter(data_orders, data_orders$`Vendor INCO Term`!="N/A - From RDC")
+ggplot(No_NA_for_INCO) + geom_bar(aes(x =`Vendor INCO Term`), fill=rainbow(7)) 
+ggplot(data_orders) + geom_bar(aes(x =`Vendor INCO Term`), fill=rainbow(8)) 
+table(data_orders$`Vendor INCO Term`)
+
+#figure 8 INCO per country
+ggplot(data_orders) + geom_bar(aes(x =Country , fill = `Vendor INCO Term`))
+```
+
+
+
+
+#1.3) Analyze Supply Relations towards: Delivery Reliability
+```{r}
+' -----------  Supply Relations towards: Delivery Reliability  ----------- '
+
+# Reliability towards: Supplier, Country, Brand, Manufacturing Country
+
+##D <- data_orders$ID
+#PC <- data_orders$`Project Code`
+#CTY <- data_orders$Country
+#INCO <- data_orders$`Vendor INCO Term`
+#SM <- data_orders$`Shipment Mode`
+#SDD <- data_orders$`Scheduled Delivery Date`
+#DRD <- data_orders$`Delivery Recorded Date`
+#SC <- data_orders$`Sub Classification`
+#VNR <- data_orders$Vendor
+#ID <- data_orders$`Item Description`
+#BRD <- data_orders$Brand
+#UM_perpack <- data_orders$`Unit of Measure (Per Pack)`
+#LIQ <- data_orders$`Line Item Quantity`
+#LIV <- data_orders$`Line Item Value`
+#PP <- data_orders$`Pack Price`
+#UP <- data_orders$`Unit Price`
+#MS <- data_orders$`Manufacturing Site`
+#WGT_KG <- data_orders$`Weight (Kilograms)`
+#FC_USD <- data_orders$`Freight Cost (USD)`
+#LII_USD  <- data_orders$`Line Item Insurance (USD)`
+#RLBY <- data_orders$Reliability
+#Manfc_country <- data_orders$`Manufacturing Country`
+#data_orders$`Scheduled Delivery Date` <- as.Date(data_orders$`Scheduled Delivery Date`,"%d%m%y")
+#data_orders$`Delivery Recorded Date` <- as.Date(data_orders$`Delivery Recorded Date`,"%d%m%y")##
+
+#Reliability
+summary(data_orders$Reliability)
+data_orders %>% count(data_orders$Reliability)
+Reliability_count <- as.data.frame(data_orders %>% count(data_orders$Reliability))
+names(Reliability_count)[1] <- "Reliability"
+Reliability_count
+Reliability_count_percentage <- round((100*Reliability_count$n/sum(Reliability_count$n)), 2)
+Reliability_count_percentage
+pie(Reliability_count$n, labels=Reliability_count_percentage, main="Reliability", border="white", col = rainbow(2))
+legend("topright", Reliability_count$Reliability, cex=0.8, fill=rainbow(2))
+ggplot(data_orders) + geom_bar(aes(x =`Reliability` , fill = `Reliability`), fill=rainbow(2))
+
+
+#Association between Supplier & Reliability 
+info_reliability <- data.frame("information.df"= vendor, "reliability.df"= reliability, "country.df"= country, "brand.df" =brand, "Manfccountry.df" = manufacturingcountry)
+ggplot(data_orders, aes(x = `reliability`, y = `vendor`)) + geom_point(alpha = 0.5, aes(color = `reliability`))
+
+Abbot <- filter(info_reliability, info_reliability$information.df=="Abbott GmbH & Co. KG")
+Abbot_Reliability <- Abbot %>% count(Abbot$reliability.df)
+Abbot_Reliability
+
+ABBVIE <- filter(info_reliability, info_reliability$information.df=="ABBVIE LOGISTICS (FORMERLY ABBOTT LOGISTICS BV)")
+ABBVIE_Reliability <- ABBVIE %>% count(ABBVIE$reliability.df)
+ABBVIE_Reliability
+
+ACCOUN <- filter(info_reliability, info_reliability$information.df=="ACCOUN NIGERIA LIMITED")
+ACCOUN_Reliability <- ACCOUN %>% count(ACCOUN$reliability.df)
+ACCOUN_Reliability
+
+ASPEN <- filter(info_reliability, info_reliability$information.df=="ASPEN PHARMACARE")
+ASPEN_Reliability <- ASPEN %>% count(ASPEN$reliability.df)
+ASPEN_Reliability
+
+Aurobindo <- filter(info_reliability, info_reliability$information.df=="Aurobindo Pharma Limited")
+Aurobindo_Reliability <- Aurobindo %>% count(Aurobindo$reliability.df)
+Aurobindo_Reliability
+
+B.C <- filter(info_reliability, info_reliability$information.df=="B&C GROUP S.A.")
+B.C_Reliability <- B.C %>% count(B.C$reliability.df)
+B.C_Reliability
+
+
+BIO_RAD <- filter(info_reliability, info_reliability$information.df=="BIO-RAD LABORATORIES (FRANCE)")
+BIO_RAD_Reliability <- BIO_RAD %>% count(BIO_RAD$reliability.df)
+BIO_RAD_Reliability
+
+BIO_RAD <- filter(info_reliability, info_reliability$information.df=="BIO-RAD LABORATORIES PTY LTD. (SOUTH AFRICA)")
+BIO_RAD_Reliability <- BIO_RAD %>% count(BIO_RAD$reliability.df)
+BIO_RAD_Reliability
+
+BIOLYTICAL <- filter(info_reliability, info_reliability$information.df=="BIOLYTICAL LABORATORIES INC.")
+BIOLYTICAL_Reliability <- BIOLYTICAL %>% count(BIOLYTICAL$reliability.df)
+BIOLYTICAL_Reliability
+
+BRISTOL <- filter(info_reliability, info_reliability$information.df=="BRISTOL-MYERS SQUIBB")
+BRISTOL_Reliability <- BRISTOL %>% count(BRISTOL$reliability.df)
+BRISTOL_Reliability
+
+BUNDI <- filter(info_reliability, info_reliability$information.df=="BUNDI INTERNATIONAL DIAGNOSTICS LTD")
+BUNDI_Reliability <- Abbot %>% count(Abbot$reliability.df)
+BUNDI_Reliability
+
+CHEMBIO <- filter(info_reliability, info_reliability$information.df=="CHEMBIO DIAGNOSTIC SYSTEMS, INC.")
+CHEMBIO_Reliability <- CHEMBIO %>% count(CHEMBIO$reliability.df)
+CHEMBIO_Reliability
+
+CIPLA  <- filter(info_reliability, info_reliability$information.df=="CIPLA LIMITED")
+CIPLA_Reliability <- CIPLA %>% count(CIPLA$reliability.df)
+CIPLA_Reliability
+
+EMCURE <- filter(info_reliability, info_reliability$information.df=="EMCURE PHARMACEUTICALS LTD")
+EMCURE_Reliability <- EMCURE %>% count(EMCURE$reliability.df)
+EMCURE_Reliability
+
+EY <- filter(info_reliability, info_reliability$information.df=="EY Laboratories")
+EY_Reliability <- EY %>% count(EY$reliability.df)
+EY_Reliability
+
+GILEAD <- filter(info_reliability, info_reliability$information.df=="GILEAD SCIENCES IRELAND, INC.")
+GILEAD_Reliability <- GILEAD %>% count(GILEAD$reliability.df)
+GILEAD_Reliability
+
+GSK <- filter(info_reliability, info_reliability$information.df=="GLAXOSMITHKLINE EXPORT LIMITED")
+GSK_Reliability <- GSK %>% count(GSK$reliability.df)
+GSK_Reliability
+
+HETERO <- filter(info_reliability, info_reliability$information.df=="HETERO LABS LIMITED")
+HETERO_Reliability <- HETERO %>% count(HETERO$reliability.df)
+HETERO_Reliability
+
+Hoffmann <- filter(info_reliability, info_reliability$information.df=="Hoffmann-La Roche ltd Basel")
+Hoffmann_Reliability <- Hoffmann %>% count(Hoffmann$reliability.df)
+Hoffmann_Reliability
+
+INTERNATIONAL <- filter(info_reliability, info_reliability$information.df=="INTERNATIONAL HEALTHCARE DISTRIBUTORS")
+INTERNATIONAL_Reliability <- INTERNATIONAL %>% count(INTERNATIONAL$reliability.df)
+INTERNATIONAL_Reliability
+
+JANSSEN <- filter(info_reliability, info_reliability$information.df=="JANSSEN SCIENCES IRELAND UC (FORMERLY JANSSEN R&D IRELAND)")
+JANSSEN_Reliability <- JANSSEN %>% count(JANSSEN$reliability.df)
+JANSSEN_Reliability
+
+JSI <- filter(info_reliability, info_reliability$information.df=="JSI R&T INSTITUTE, INC.")
+JSI_Reliability <- JSI %>% count(JSI$reliability.df)
+JSI_Reliability
+
+KAS <- filter(info_reliability, info_reliability$information.df=="KAS MEDICS LIMITED")
+KAS_Reliability <- KAS %>% count(KAS$reliability.df)
+KAS_Reliability
+
+LAWRENCE  <- filter(info_reliability, info_reliability$information.df=="LAWRENCE LABORATORIES (SUBSIDIARY OF BRISTOL MYERS SQUIBB)")
+LAWRENCE_Reliability <- LAWRENCE %>% count(LAWRENCE $reliability.df)
+LAWRENCE_Reliability
+
+MERCK <- filter(info_reliability, info_reliability$information.df=="MERCK SHARP & DOHME IDEA GMBH (FORMALLY MERCK SHARP & DOHME B.V.)")
+MERCK_Reliability <- MERCK %>% count(MERCK$reliability.df)
+MERCK_Reliability
+
+MICRO <- filter(info_reliability, info_reliability$information.df=="MICRO LABS LIMITED")
+MICRO_Reliability <- MICRO %>% count(MICRO$reliability.df)
+MICRO_Reliability
+
+MYLAN  <- filter(info_reliability, info_reliability$information.df=="MYLAN LABORATORIES LTD (FORMERLY MATRIX LABORATORIES)")
+MYLAN_Reliability <- MYLAN %>% count(MYLAN$reliability.df)
+MYLAN_Reliability
+
+OMEGA <- filter(info_reliability, info_reliability$information.df=="OMEGA DIAGNOSTICS LTD")
+OMEGA_Reliability <- OMEGA %>% count(OMEGA$reliability.df)
+OMEGA_Reliability
+
+Orasure <- filter(info_reliability, info_reliability$information.df=="Orasure Technologies Inc.")
+Orasure_Reliability <- Orasure %>% count(Orasure$reliability.df)
+Orasure_Reliability
+
+Orgenics <- filter(info_reliability, info_reliability$information.df=="Orgenics, Ltd")
+Orgenics_Reliability <- Orgenics %>% count(Orgenics$reliability.df)
+Orgenics_Reliability
+
+PHARMACY <- filter(info_reliability, info_reliability$information.df=="PHARMACY DIRECT")
+PHARMACY_Reliability <-PHARMACY %>% count(PHARMACY$reliability.df)
+PHARMACY_Reliability
+
+Premier <- filter(info_reliability, info_reliability$information.df=="Premier Medical Corporation Ltd.")
+Premier_Reliability <- Premier %>% count(Premier$reliability.df)
+Premier_Reliability
+
+RAININ <- filter(info_reliability, info_reliability$information.df=="RAININ INSTRUMENT, LLC.")
+RAININ_Reliability <- RAININ %>% count(RAININ$reliability.df)
+RAININ_Reliability
+
+RANBAXY <- filter(info_reliability, info_reliability$information.df=="RANBAXY Fine Chemicals LTD.")
+RANBAXY_Reliability <- RANBAXY %>% count(RANBAXY$reliability.df)
+RANBAXY_Reliability
+
+S_buys <- filter(info_reliability, info_reliability$information.df=="S. BUYS WHOLESALER")
+S_buys_Reliability <- S_buys %>% count(S_buys$reliability.df)
+S_buys_Reliability
+
+SCMS <- filter(info_reliability, info_reliability$information.df=="SCMS from RDC")
+SCMS_Reliability <- SCMS %>% count(SCMS$reliability.df)
+SCMS_Reliability
+
+Standard <- filter(info_reliability, info_reliability$information.df=="Standard Diagnostics, Inc.")
+Standard_Reliability <- Standard %>% count(Standard$reliability.df)
+Standard_Reliability
+
+STRIDES <- filter(info_reliability, info_reliability$information.df=="STRIDES ARCOLAB LIMITED")
+STRIDES_Reliability <- STRIDES %>% count(STRIDES$reliability.df)
+STRIDES_Reliability
+
+SUN <- filter(info_reliability, info_reliability$information.df=="SUN PHARMACEUTICAL INDUSTRIES LTD (RANBAXY LABORATORIES LIMITED)")
+SUN_Reliability <- SUN %>% count(SUN$reliability.df)
+SUN_Reliability
+
+Trinity <- filter(info_reliability, info_reliability$information.df=="Trinity Biotech, Plc")
+Trinity_Reliability <- Trinity %>% count(Trinity$reliability.df)
+Trinity_Reliability
+
+
+
+#Association between Country & Reliability 
+table(data_orders$Country)
+ggplot(data_orders, aes(x = `reliability`, y = `country`)) + geom_point(alpha = 0.5, aes(color = `reliability`))
+```
+
+
+```{r}
+cote1 <- filter(info_reliability, info_reliability$country.df=="Côte d'Ivoire")
+cote_Reliability <- cote1 %>% count(cote1$reliability.df)
+cote_Reliability_percentages <- 100*(cote_Reliability$n)/sum(cote_Reliability$n)
+cote_Reliability_percentages
+cote_Reliability
+
+Mozambique1 <- filter(info_reliability, info_reliability$country.df=="Mozambique")
+Mozambique_Reliability <- Mozambique1 %>% count(Mozambique1$reliability.df)
+Mozambique_Reliability_percentages <- 100*(Mozambique_Reliability$n)/sum(Mozambique_Reliability$n)
+Mozambique_Reliability_percentages
+Mozambique_Reliability
+
+Nigeria1 <- filter(info_reliability, info_reliability$country.df=="Nigeria")
+Nigeria_Reliability <- Nigeria1 %>% count(Nigeria1$reliability.df)
+Nigeria_Reliability_percentages <- 100*(Nigeria_Reliability$n)/sum(Nigeria_Reliability$n)
+Nigeria_Reliability_percentages
+Nigeria_Reliability
+
+South_Africa1 <- filter(info_reliability, info_reliability$country.df=="South Africa")
+South_Africa_Reliability <- South_Africa1 %>% count(South_Africa1$reliability.df)
+South_Africa_Reliability_percentages <- 100*(South_Africa_Reliability$n)/sum(South_Africa_Reliability$n)
+South_Africa_Reliability_percentages
+South_Africa_Reliability
+
+Tanzania1 <- filter(info_reliability, info_reliability$country.df=="Tanzania")
+Tanzania_Reliability <- Tanzania1 %>% count(Tanzania1$reliability.df)
+Tanzania_Reliability_percentages <- 100*(Tanzania_Reliability$n)/sum(Tanzania_Reliability$n)
+Tanzania_Reliability_percentages
+Tanzania_Reliability
+
+Uganda1 <- filter(info_reliability, info_reliability$country.df=="Uganda")
+Uganda_Reliability <- Uganda1 %>% count(Uganda1$reliability.df)
+Uganda_Reliability_percentages <- 100*(Uganda_Reliability$n)/sum(Uganda_Reliability$n)
+Uganda_Reliability_percentages
+Uganda_Reliability
+
+Zambia1 <- filter(info_reliability, info_reliability$country.df=="Zambia")
+Zambia_Reliability <- Zambia1 %>% count(Zambia1$reliability.df)
+Zambia_Reliability_percentages <- 100*(Zambia_Reliability$n)/sum(Zambia_Reliability$n)
+Zambia_Reliability_percentages
+Zambia_Reliability
+
+Zimbabwe1 <- filter(info_reliability, info_reliability$country.df=="Zimbabwe")
+Zimbabwe_Reliability <- Zimbabwe1 %>% count(Zimbabwe1$reliability.df)
+Zimbabwe_Reliability_percentages <- 100*(Zimbabwe_Reliability$n)/sum(Zimbabwe_Reliability$n)
+Zimbabwe_Reliability_percentages
+Zimbabwe_Reliability
+
+#count
+#table(data_orders$Country)
+
+#Country_Reliability <- data_orders[, c("Country","Reliability" )]
+#var2 <- table(Country_Reliability)
+#plot(var2)
+
+
+#Association between Brand & Country 
+
+' -----------  Supply Relations towards: Delivery Reliability  ----------- '
+
+table(data_orders$Brand)
+ggplot(data_orders, aes(x = `brand`, y = `country`)) + geom_point(alpha = 0.5, aes(color = `brand`))
+
+
+' -----------  Brands - Delivery Reliability  ----------- '
+
+Aluvia <- filter(info_reliability, info_reliability$brand.df=="Aluvia")
+Aluvia_Reliability <- Aluvia %>% count(Aluvia$reliability.df)
+Aluvia_Reliability_percentages <- 100*(Aluvia_Reliability$n)/sum(Aluvia_Reliability$n)
+Aluvia_Reliability_percentages
+Aluvia_Reliability
+
+Atripla <- filter(info_reliability, info_reliability$brand.df=="Atripla")
+Atripla_Reliability <- Atripla %>% count(Atripla$reliability.df)
+Atripla_Reliability_percentages <- 100*(Atripla_Reliability$n)/sum(Atripla_Reliability$n)
+Atripla_Reliability_percentages
+Atripla_Reliability
+
+Bioline <- filter(info_reliability, info_reliability$brand.df=="Bioline")
+Bioline_Reliability <- Bioline %>% count(Bioline$reliability.df)
+Bioline_Reliability_percentages <- 100*(Bioline_Reliability$n)/sum(Bioline_Reliability$n)
+Bioline_Reliability_percentages
+Bioline_Reliability
+
+Bundi <- filter(info_reliability, info_reliability$brand.df=="Bundi")
+Bundi_Reliability <- Bundi %>% count(Bundi$reliability.df)
+Bundi_Reliability_percentages <- 100*(Bundi_Reliability$n)/sum(Bundi_Reliability$n)
+Bundi_Reliability_percentages
+Bundi_Reliability
+
+Capillus <- filter(info_reliability, info_reliability$brand.df=="Capillus")
+Capillus_Reliability <- Capillus %>% count(Capillus$reliability.df)
+Capillus_Reliability_percentages <- 100*(Capillus_Reliability$n)/sum(Capillus_Reliability$n)
+Capillus_Reliability_percentages
+Capillus_Reliability
+
+Combivir <- filter(info_reliability, info_reliability$brand.df=="Combivir")
+Combivir_Reliability <- Combivir %>% count(Combivir$reliability.df)
+Combivir_Reliability_percentages <- 100*(Combivir_Reliability$n)/sum(Combivir_Reliability$n)
+Combivir_Reliability_percentages
+Combivir_Reliability
+
+Crixivan <- filter(info_reliability, info_reliability$brand.df=="Crixivan")
+Crixivan_Reliability <- Crixivan %>% count(Crixivan$reliability.df)
+Crixivan_Reliability_percentages <- 100*(Crixivan_Reliability$n)/sum(Crixivan_Reliability$n)
+Crixivan_Reliability_percentages
+Crixivan_Reliability
+
+Determine <- filter(info_reliability, info_reliability$brand.df=="Determine")
+Determine_Reliability <- Determine %>% count(Determine$reliability.df)
+Determine_Reliability_percentages <- 100*(Determine_Reliability$n)/sum(Determine_Reliability$n)
+Determine_Reliability_percentages
+Determine_Reliability
+
+Epivir<- filter(info_reliability, info_reliability$brand.df=="Epivir")
+Epivir_Reliability <- Epivir %>% count(Epivir$reliability.df)
+Epivir_Reliability_percentages <- 100*(Epivir_Reliability$n)/sum(Epivir_Reliability$n)
+Epivir_Reliability_percentages
+Epivir_Reliability
+
+Generic <- filter(info_reliability, info_reliability$brand.df=="Generic")
+Generic_Reliability <- Generic  %>% count(Generic$reliability.df)
+Generic_Reliability_percentages <- 100*(Generic_Reliability$n)/sum(Generic_Reliability$n)
+Generic_Reliability_percentages
+Generic_Reliability
+
+InstantCHEK<- filter(info_reliability, info_reliability$brand.df=="InstantCHEK")
+InstantCHEK_Reliability <- InstantCHEK %>% count(InstantCHEK$reliability.df)
+InstantCHEK_percentages <-100*(InstantCHEK_Reliability$n)/sum(InstantCHEK_Reliability$n)
+InstantCHEK_percentages
+InstantCHEK_Reliability
+
+INSTi<- filter(info_reliability, info_reliability$brand.df=="INSTi")
+INSTi_Reliability <- INSTi %>% count(INSTi$reliability.df)
+INSTi_Reliability_percentages <- 100*(INSTi_Reliability$n)/sum(INSTi_Reliability$n)
+INSTi_Reliability_percentages
+INSTi_Reliability
+
+Intelence<- filter(info_reliability, info_reliability$brand.df=="Intelence")
+Intelence_Reliability <- Intelence %>% count(Intelence$reliability.df)
+Intelence_Reliability_percentages <- 100*(Intelence_Reliability$n)/sum(Intelence_Reliability$n)
+Intelence_Reliability_percentages
+Intelence_Reliability
+
+Invirase<- filter(info_reliability, info_reliability$brand.df=="Invirase")
+Invirase_Reliability <- Invirase %>% count(Invirase$reliability.df)
+Invirase_Reliability_percentages <- 100*(Epivir_Reliability$n)/sum(Epivir_Reliability$n)
+Invirase_Reliability_percentages
+Invirase_Reliability
+
+Isentress<- filter(info_reliability, info_reliability$brand.df=="Isentress")
+Isentress_Reliability <- Isentress %>% count(Isentress$reliability.df)
+Isentress_Reliability_percentages <- 100*(Isentress_Reliability$n)/sum(Isentress_Reliability$n)
+Isentress_Reliability_percentages
+Isentress_Reliability
+
+Kaletra<- filter(info_reliability, info_reliability$brand.df=="Kaletra")
+Kaletra_Reliability <- Kaletra %>% count(Kaletra$reliability.df)
+Kaletra_Reliability_percentages <- 100*(Kaletra_Reliability$n)/sum(Kaletra_Reliability$n)
+Kaletra_Reliability_percentages
+Kaletra_Reliability
+
+LAV<- filter(info_reliability, info_reliability$brand.df=="LAV")
+LAV_Reliability <- LAV %>% count(LAV$reliability.df)
+LAV_Reliability_percentages <- 100*(Epivir_Reliability$n)/sum(Epivir_Reliability$n)
+LAV_Reliability_percentages
+LAV_Reliability
+
+Multispot<- filter(info_reliability, info_reliability$brand.df=="Multispot")
+Multispot_Reliability <- Multispot %>% count(Multispot$reliability.df)
+Multispot_Reliability_percentages <- 100*(Multispot_Reliability$n)/sum(Multispot_Reliability$n)
+Multispot_Reliability_percentages
+Multispot_Reliability
+
+Norvir<- filter(info_reliability, info_reliability$brand.df=="Norvir")
+Norvir_Reliability <- Norvir %>% count(Norvir$reliability.df)
+Norvir_Reliability_percentages <- 100*(Norvir_Reliability$n)/sum(Epivir_Reliability$n)
+Norvir_Reliability_percentages
+Norvir_Reliability
+
+OraQuick<- filter(info_reliability, info_reliability$brand.df=="OraQuick")
+OraQuick_Reliability <- OraQuick %>% count(OraQuick$reliability.df)
+OraQuick_Reliability_percentages <- 100*(OraQuick_Reliability$n)/sum(OraQuick_Reliability$n)
+OraQuick_Reliability_percentages
+OraQuick_Reliability
+
+PeptiLAV<- filter(info_reliability, info_reliability$brand.df=="Pepti-LAV")
+PeptiLAV_Reliability <- PeptiLAV %>% count(PeptiLAV$reliability.df)
+PeptiLAV_Reliability_percentages <- 100*(PeptiLAV_Reliability$n)/sum(PeptiLAV_Reliability$n)
+PeptiLAV_Reliability_percentages
+PeptiLAV_Reliability
+
+Prezista<- filter(info_reliability, info_reliability$brand.df=="Prezista")
+Prezista_Reliability <- Prezista %>% count(Prezista$reliability.df)
+Prezista_Reliability_percentages <- 100*(Prezista_Reliability$n)/sum(Prezista_Reliability$n)
+Prezista_Reliability_percentages
+Prezista_Reliability
+
+Retrovir<- filter(info_reliability, info_reliability$brand.df=="Retrovir")
+Retrovir_Reliability <- Retrovir %>% count(Retrovir$reliability.df)
+Retrovir_Reliability_percentages <- 100*(Retrovir_Reliability$n)/sum(Retrovir_Reliability$n)
+Retrovir_Reliability_percentages
+Retrovir_Reliability
+
+Reveal<- filter(info_reliability, info_reliability$brand.df=="Reveal")
+Reveal_Reliability <- Reveal %>% count(Reveal$reliability.df)
+Reveal_Reliability_percentages <- 100*(Reveal_Reliability$n)/sum(Reveal_Reliability$n)
+Reveal_Reliability_percentages
+Reveal_Reliability
+
+Reyataz<- filter(info_reliability, info_reliability$brand.df=="Reyataz")
+Reyataz_Reliability <- Reyataz %>% count(Reyataz$reliability.df)
+Reyataz_Reliability_percentages <- 100*(Reyataz_Reliability$n)/sum(Reyataz_Reliability$n)
+Reyataz_Reliability_percentages
+Reyataz_Reliability
+
+StatPak <- filter(info_reliability, info_reliability$brand.df=="Stat-Pak")
+StatPak_Reliability <- StatPak %>% count(StatPak$reliability.df)
+StatPak_Reliability_percentages <- 100*(StatPak_Reliability$n)/sum(StatPak_Reliability$n)
+StatPak_Reliability_percentages
+StatPak_Reliability
+
+Stocrin<- filter(info_reliability, info_reliability$brand.df=="Stocrin/Sustiva")
+Stocrin_Reliability <- Stocrin %>% count(Stocrin$reliability.df)
+Stocrin_Reliability_percentages <- 100*(Stocrin_Reliability$n)/sum(Stocrin_Reliability$n)
+Stocrin_Reliability_percentages
+Stocrin_Reliability
+
+Trizivir<- filter(info_reliability, info_reliability$brand.df=="Trizivir")
+Trizivir_Reliability <- Trizivir %>% count(Trizivir$reliability.df)
+Trizivir_Reliability_percentages <- 100*(Trizivir_Reliability$n)/sum(Trizivir_Reliability$n)
+Trizivir_Reliability_percentages
+Trizivir_Reliability
+
+Truvada<- filter(info_reliability, info_reliability$brand.df=="Truvada")
+Truvada_Reliability <-Truvada %>% count(Truvada$reliability.df)
+Truvada_Reliability_percentages <- 100*(Truvada_Reliability$n)/sum(Truvada_Reliability$n)
+Truvada_Reliability_percentages
+Truvada_Reliability
+
+UniGold <- filter(info_reliability, info_reliability$brand.df=="Uni-Gold")
+UniGold_Reliability <- UniGold %>% count(UniGold$reliability.df)
+UniGold_Reliability_percentages <- 100*(UniGold_Reliability$n)/sum(UniGold_Reliability$n)
+UniGold_Reliability_percentages
+UniGold_Reliability
+
+VIDex<- filter(info_reliability, info_reliability$brand.df=="VIDex")
+VIDex_Reliability <- VIDex %>% count(VIDex$reliability.df)
+VIDex_Reliability_percentages <- 100*(VIDex_Reliability$n)/sum(VIDex_Reliability$n)
+VIDex_Reliability_percentages
+VIDex_Reliability
+
+VIDexC<- filter(info_reliability, info_reliability$brand.df=="VIDex EC")
+VIDexC_Reliability <- VIDexC %>% count(VIDexC$reliability.df)
+VIDexC_Reliability_percentages <- 100*(VIDexC_Reliability$n)/sum(VIDexC_Reliability$n)
+VIDexC_Reliability_percentages
+VIDexC_Reliability
+
+Viracept<- filter(info_reliability, info_reliability$brand.df=="Viracept")
+Viracept_Reliability <- Viracept %>% count(Viracept$reliability.df)
+Viracept_Reliability_percentages <- 100*(Viracept_Reliability$n)/sum(Viracept_Reliability$n)
+Viracept_Reliability_percentages
+Viracept_Reliability
+
+Viramune<- filter(info_reliability, info_reliability$brand.df=="Viramune")
+Viramune_Reliability <- Viramune %>% count(Viramune$reliability.df)
+Viramune_Reliability_percentages <- 100*(Viramune_Reliability$n)/sum(Viramune_Reliability$n)
+Viramune_Reliability_percentages
+Viramune_Reliability
+
+Viread<- filter(info_reliability, info_reliability$brand.df=="Viread")
+Viread_Reliability <-  Viread %>% count(Viread$reliability.df)
+Viread_Reliability_percentages <- 100*( Viread_Reliability$n)/sum( Viread_Reliability$n)
+Viread_Reliability_percentages
+Viread_Reliability
+
+Visitect<- filter(info_reliability, info_reliability$brand.df=="Visitect")
+Visitect_Reliability <- Visitect %>% count(Visitect$reliability.df)
+Visitect_Reliability_percentages <- 100*(Visitect_Reliability$n)/sum(Visitect_Reliability$n)
+Visitect_Reliability_percentages
+Visitect_Reliability
+
+Visitect<- filter(info_reliability, info_reliability$brand.df=="Visitect")
+Visitect_Reliability <- Visitect %>% count(Visitect$reliability.df)
+Visitect_Reliability_percentages <- 100*(Visitect_Reliability$n)/sum(Visitect_Reliability$n)
+Visitect_Reliability_percentages
+Visitect_Reliability
+
+Zerit<- filter(info_reliability, info_reliability$brand.df=="Zerit")
+Zerit_Reliability <- Zerit %>% count(Zerit$reliability.df)
+Zerit_Reliability_percentages <- 100*(Zerit_Reliability$n)/sum(Zerit_Reliability$n)
+Zerit_Reliability_percentages
+Zerit_Reliability
+
+Ziagen<- filter(info_reliability, info_reliability$brand.df=="Ziagen")
+Ziagen_Reliability <- Ziagen %>% count(Ziagen$reliability.df)
+Ziagen_Reliability_percentages <- 100*(Ziagen_Reliability$n)/sum(Ziagen_Reliability$n)
+Ziagen_Reliability_percentages
+Ziagen_Reliability
+
+
+
+
+' -----------  Manufacturing Country - Delivery Reliability  ----------- ' 
+
+table(data_orders$`Manufacturing Country`)
+ggplot(data_orders, aes(x = `reliability`, y = `manufacturingcountry`)) + geom_point(alpha = 0.5, aes(color = `reliability`))
+
+India <- filter(info_reliability, info_reliability$Manfccountry.df=="India")
+India_Reliability <- India %>% count(India$reliability.df)
+India_Reliability_percentages <- 100*(India_Reliability$n)/sum(India_Reliability$n)
+India_Reliability_percentages
+India_Reliability
+
+USA  <- filter(info_reliability, info_reliability$Manfccountry.df=="USA")
+USA_Reliability <- USA %>% count(USA$reliability.df)
+USA_Reliability_percentages <- 100*(USA_Reliability$n)/sum(USA_Reliability$n)
+USA_Reliability_percentages
+USA_Reliability
+
+Germany  <- filter(info_reliability, info_reliability$Manfccountry.df=="Germany")
+Germany_Reliability <- Germany %>% count(Germany$reliability.df)
+Germany_Reliability_percentages <- 100*(Germany_Reliability$n)/sum(Germany_Reliability$n)
+Germany_Reliability_percentages
+Germany_Reliability
+
+England  <- filter(info_reliability, info_reliability$Manfccountry.df=="England")
+England_Reliability <- England %>% count(England$reliability.df)
+England_Reliability_percentages <- 100*(England_Reliability$n)/sum(England_Reliability$n)
+England_Reliability_percentages
+England_Reliability
+
+Japan   <- filter(info_reliability, info_reliability$Manfccountry.df=="Japan")
+Japan_Reliability <- Japan %>% count(Japan $reliability.df)
+Japan_Reliability_percentages <- 100*(Japan_Reliability$n)/sum(Japan_Reliability$n)
+Japan_Reliability_percentages
+Japan_Reliability
+
+Ireland  <- filter(info_reliability, info_reliability$Manfccountry.df=="Ireland")
+Ireland_Reliability <- Ireland %>% count(Ireland$reliability.df)
+Ireland_Reliability_percentages <- 100*(Ireland_Reliability$n)/sum(Ireland_Reliability$n)
+Ireland_Reliability_percentages
+Ireland_Reliability
+
+France  <- filter(info_reliability, info_reliability$Manfccountry.df=="France")
+France_Reliability <- France %>% count(France$reliability.df)
+France_Reliability_percentages <- 100*(France_Reliability$n)/sum(France_Reliability$n)
+France_Reliability_percentages
+France_Reliability
+
+South_Africa_Manufacturing   <- filter(info_reliability, info_reliability$Manfccountry.df=="South Africa")
+South_Africa_Reliability <- South_Africa_Manufacturing %>% count(South_Africa_Manufacturing$reliability.df)
+South_Africa_Reliability_percentages <- 100*(South_Africa_Reliability$n)/sum(South_Africa_Reliability$n)
+South_Africa_Reliability_percentages
+South_Africa_Reliability
+
+Netherlands  <- filter(info_reliability, info_reliability$Manfccountry.df=="Netherlands")
+Netherlands_Reliability <- Netherlands %>% count(Netherlands$reliability.df)
+Netherlands_Reliability_percentages <- 100*(Netherlands_Reliability$n)/sum(Netherlands_Reliability$n)
+Netherlands_Reliability_percentages
+Netherlands_Reliability
+
+Australia <- filter(info_reliability, info_reliability$Manfccountry.df=="Australia")
+Australia_Reliability <- Australia %>% count(Australia$reliability.df)
+Australia_Reliability_percentages <- 100*(Australia_Reliability$n)/sum(Australia_Reliability$n)
+Australia_Reliability_percentages
+Australia_Reliability
+
+Canada  <- filter(info_reliability, info_reliability$Manfccountry.df=="Canada")
+Canada_Reliability <- Canada %>% count(Canada$reliability.df)
+Canada_Reliability_percentages <- 100*(Canada_Reliability$n)/sum(Canada_Reliability$n)
+Canada_Reliability_percentages
+Canada_Reliability
+
+Italy  <- filter(info_reliability, info_reliability$Manfccountry.df=="Italy")
+Italy_Reliability <- Italy %>% count(Italy$reliability.df)
+Italy_Reliability_percentages <- 100*(Italy_Reliability$n)/sum(Italy_Reliability$n)
+Italy_Reliability_percentages
+Italy_Reliability
+
+Korea <- filter(info_reliability, info_reliability$Manfccountry.df=="Korea")
+Korea_Reliability <- Korea  %>% count(Korea $reliability.df)
+Korea_Reliability_percentages <- 100*(Korea_Reliability$n)/sum(Korea_Reliability$n)
+Korea_Reliability_percentages
+Korea_Reliability
+
+Poland  <- filter(info_reliability, info_reliability$Manfccountry.df=="Poland")
+Poland_Reliability <- Poland %>% count(Poland$reliability.df)
+Poland_Reliability_percentages <- 100*(Poland_Reliability$n)/sum(Poland_Reliability$n)
+Poland_Reliability_percentages
+Poland_Reliability
+
+PuertoRico  <- filter(info_reliability, info_reliability$Manfccountry.df=="Puerto Rico")
+PuertoRico_Reliability <- PuertoRico %>% count(PuertoRico$reliability.df)
+PuertoRico_Reliability_percentages <- 100*(PuertoRico_Reliability$n)/sum(PuertoRico_Reliability$n)
+PuertoRico_Reliability_percentages
+PuertoRico_Reliability
+
+Spain  <- filter(info_reliability, info_reliability$Manfccountry.df=="Spain")
+Spain_Reliability <- Spain %>% count(Spain$reliability.df)
+Spain_Reliability_percentages <- 100*(Spain_Reliability$n)/sum(Spain_Reliability$n)
+Spain_Reliability_percentages
+Spain_Reliability
+
+Switzerland  <- filter(info_reliability, info_reliability$Manfccountry.df=="Switzerland")
+Switzerland_Reliability <- Switzerland %>% count(Switzerland$reliability.df)
+Switzerland_Reliability_percentages <- 100*(Switzerland_Reliability$n)/sum(Switzerland_Reliability$n)
+Switzerland_Reliability_percentages
+Switzerland_Reliability
+
+Thailand  <- filter(info_reliability, info_reliability$Manfccountry.df=="Thailand")
+Thailand_Reliability <- Thailand %>% count(Thailand$reliability.df)
+Thailand_Reliability_percentages <- 100*(Thailand_Reliability$n)/sum(Thailand_Reliability$n)
+Thailand_Reliability_percentages
+Thailand_Reliability
+
+
+Greek  <- filter(info_reliability, info_reliability$Manfccountry.df=="Greek")
+Greek_Reliability <- Greek %>% count(Greek$reliability.df)
+Greek_Reliability_percentages <- 100*(Greek_Reliability$n)/sum(Greek_Reliability$n)
+Greek_Reliability_percentages
+Greek_Reliability
+
+#Figure19 Days of Delay per Country
+ggplot(data_orders, aes(x = `Days of Delay`, y = Country)) + geom_point(alpha = 0.5, aes(color = Reliability))
+#Figure20 Mean Delay per country
+tapply(data_orders$`Days of Delay`, data_orders$Country, mean)
+
+
+
+
+' -----------  Linitemvalue/Linitemquantity - Delivery Reliability  ----------- ' 
+
+#figure 18 Reliability - Line Item Value/Quantity
+ggplot(data_orders, aes(x = Reliability, y = `Line Item Value`)) + geom_point(alpha = 0.5, aes(color = Reliability)) + theme(text = element_text(size=20))
+ggplot(data_orders, aes(x = Reliability, y = `Line Item Quantity`)) + geom_point(alpha = 0.5, aes(color =Reliability)) + theme(text = element_text(size=20))
+
+
+
+' -----------  Shipmentmode - Delivery Reliability  ----------- ' 
+
+#Figure21 Days of Delay per Shipmentmode
+ggplot(data_orders, aes(x = `Days of Delay`, y = `Estimated Shipment Mode`)) + geom_point(alpha = 0.5, aes(color = Reliability))
+#Figure22 Mean Delay per Shipmenmode
+tapply(data_orders$`Days of Delay`, data_orders$`Estimated Shipment Mode`, mean)
+
+```
+
+
+
+
+
+#1.4) Analyze Supply Relations towards: Suppliers (SAVI)
+```{r}
+' -----------  Supply Relations towards: Suppliers=Vendors  ----------- '
+
+#Vendor per Shipment Mode
+ggplot(mutate(data_orders)) + geom_bar(aes(x = shipmentmode, fill = Vendor )) + theme(legend.key.size = unit(0.5, "cm"), legend.key.width = unit(0.2, "cm"), axis.text.x = element_text(size = 12, angle =90))
+
+vendor_count <- as.data.frame(data_orders %>% count(data_orders$Vendor))
+vendor_count
+ggplot(vendor_count, aes(x=vendor_count$`data_orders$Vendor`, y=vendor_count$n))
+
+#main suppliers: PHARMACY DIRECT, Orgenics Ltd, S. BUYS WHOLESALER, SCMS from RDC  (80%)
+PHARMACY2 <- filter(dataset, dataset$vendor=="PHARMACY DIRECT")
+Orgenics2 <- filter(dataset, dataset$vendor=="Orgenics, Ltd")
+S_buys2 <- filter(dataset, dataset$vendor=="S. BUYS WHOLESALER")
+SCMS2 <- filter(dataset, dataset$vendor=="SCMS from RDC")
+u4 <- ggplot(mutate(PHARMACY2)) + ggtitle("Vendor: PHARMACY DIRECT") + geom_bar(aes(x = shipmentmode, fill = reliability)) + scale_fill_manual(values = c("red", "green"))+ theme(text = element_text(size=20))
+u3 <- ggplot(mutate(Orgenics2))+ ggtitle("Vendor: Orgenics, Ltd") + geom_bar(aes(x = shipmentmode, fill = reliability), show.legend = FALSE) + scale_fill_manual(values = c("red", "green"))+ theme(text = element_text(size=20))
+u2 <- ggplot(mutate(S_buys2))+ ggtitle("Vendor: S. BUYS WHOLESALER") + geom_bar(aes(x = shipmentmode, fill = reliability), show.legend = FALSE) + scale_fill_manual(values = c("red", "green")) + theme(text = element_text(size=20))
+u1 <- ggplot(mutate(SCMS2))+ ggtitle("Vendor: SCMS from RDC") + geom_bar(aes(x = shipmentmode, fill = reliability), show.legend = FALSE)  + scale_fill_manual(values = c("red", "green"))+ theme(text = element_text(size=20))
+u4
+grid.arrange(u1,u2,u3,u4)
+
+mean(PHARMACY2$estimatedminimaldistance)
+
+# manufacturingcountry of each vendor
+ggplot(mutate(data_orders)) + geom_bar(aes(x = vendor, fill = manufacturingcountry))+ theme(legend.key.size = unit(0.5, "cm"), legend.key.width = unit(0.2, "cm"), axis.text.x = element_text(size = 10, angle =90))
+# manufacturing country - manufacturing side
+ggplot(mutate(SCMS2)) + ggtitle("Vendor: SCMS from RDC") + geom_bar(aes(x = manufacturingcountry, fill = manufacturingsite))+ theme(axis.text.x = element_text(size = 10, angle =90))
+ggplot(mutate(S_buys2)) + ggtitle("Vendor: S. BUYS WHOLESALER") + geom_bar(aes(x = manufacturingcountry, fill = manufacturingsite))+ theme(axis.text.x = element_text(size = 10, angle =90))
+ggplot(mutate(Orgenics2)) + ggtitle("Vendor: Orgenics, Ltd") + geom_bar(aes(x = manufacturingcountry, fill = manufacturingsite))+ theme(axis.text.x = element_text(size = 10, angle =90))
+ggplot(mutate(PHARMACY2)) + ggtitle("Vendor: PHARMACY DIRECT") + geom_bar(aes(x = manufacturingcountry, fill = manufacturingsite))+ theme(axis.text.x = element_text(size = 10, angle =90))
+
+
+
+
+
+' -------------  Supply Relations towards: Brands ------------- '
+
+# Shipment Mode - Brand
+ggplot(mutate(data_orders)) + geom_bar(aes(x = shipmentmode, fill = Brand)) + theme(text = element_text(size=20))
+
+#figure 14: Country - Brand
+ggplot(mutate(data_orders)) + geom_bar(aes(x = Country, fill = Brand)) + theme(text = element_text(size=20))
+
+#Manufacturing-country per Country
+ggplot(mutate(data_orders)) + geom_bar(aes(x = Country, fill = manufacturingcountry)) + theme(text = element_text(size=20))
+
+
+#figure 15: Brands per Year
+data_orders$year = str_sub(data_orders$`Delivery Recorded Date`,-2,-1)
+data_orders$year <- sub("^", "20", data_orders$year )
+q1 <- ggplot(data_orders %>% filter(year %in% c(2006)) %>% arrange(`Line Item Value`) %>% head(10)) + geom_bar(aes(x = Brand, fill = Brand )) +ggtitle(2006) + scale_fill_manual(values = c("darkgoldenrod1", "red", "darkgoldenrod2", "darkgoldenrod3", "darkgoldenrod4" )) + theme(text = element_text(size=20))
+q2 <- ggplot(data_orders %>% filter(year %in% c(2007)) %>% arrange(`Line Item Value`) %>% head(10)) + geom_bar(aes(x = Brand, fill = Brand )) +ggtitle(2007) + scale_fill_manual(values =c("blue", "red")) + theme(text = element_text(size=20))
+q3 <- ggplot(data_orders %>% filter(year %in% c(2008)) %>% arrange(`Line Item Value`) %>% head(10)) + geom_bar(aes(x = Brand, fill = Brand )) +ggtitle(2008) + scale_fill_manual(values = c("red", "yellow")) + theme(text = element_text(size=20))
+q4 <- ggplot(data_orders %>% filter(year %in% c(2009)) %>% arrange(`Line Item Value`) %>% head(10)) + geom_bar(aes(x = Brand, fill = Brand )) +ggtitle(2009) + scale_fill_manual(values = c("red", "yellow", "blue4")) + theme(text = element_text(size=20))
+p1 <- ggplot(data_orders %>% filter(year %in% c(2010)) %>% arrange(`Line Item Value`) %>% head(10)) + geom_bar(aes(x = Brand, fill = Brand )) +ggtitle(2010) + scale_fill_manual(values = c("red", "yellow", "green")) + theme(text = element_text(size=20))
+p2 <- ggplot(data_orders %>% filter(year %in% c(2011)) %>% arrange(`Line Item Value`) %>% head(10)) + geom_bar(aes(x = Brand, fill = Brand )) +ggtitle(2011)+ scale_fill_manual(values = c("blue", "red")) + theme(text = element_text(size=20))
+p3 <- ggplot(data_orders %>% filter(year %in% c(2012)) %>% arrange(`Line Item Value`) %>% head(10)) + geom_bar(aes(x = Brand, fill = Brand )) +ggtitle(2012)+ scale_fill_manual(values = c("red", "blue", "purple")) + theme(text = element_text(size=20))
+p4 <- ggplot(data_orders %>% filter(year %in% c(2013)) %>% arrange(`Line Item Value`) %>% head(10)) + geom_bar(aes(x = Brand, fill = Brand )) +ggtitle(2013)+ scale_fill_manual(values = c("blue", "red", "pink", "#FF33CC")) + theme(text = element_text(size=20))
+p5 <- ggplot(data_orders %>% filter(year %in% c(2014)) %>% arrange(`Line Item Value`) %>% head(10)) + geom_bar(aes(x = Brand, fill = Brand )) +ggtitle(2014)+ scale_fill_manual(values = c("red", "yellow")) + theme(text = element_text(size=20))
+p6 <- ggplot(data_orders %>% filter(year %in% c(2015)) %>% arrange(`Line Item Value`) %>% head(10)) + geom_bar(aes(x = Brand, fill = Brand )) +ggtitle(2015)+ scale_fill_manual(values = c("red", "yellow")) + theme(text = element_text(size=20))
+grid.arrange(p1,p2,p3,p4,p5,p6, ncol = 3)
+grid.arrange(q1,q2,q3,q4,p1,p2,p3,p4,p5,p6)
+
+#figure 16: Lineitemvalue per Brand
+tx = aggregate( data_orders$`Line Item Value`, list(data_orders$Brand), mean)
+ggplot(tx %>% arrange(desc(x)), aes(x=Group.1, y=x, fill = Group.1)) + stat_summary(fun="mean", geom="bar") + theme(axis.text.x = element_text(size = 12, angle =90))
+
+
+```
+
+
+```{r}
+
+
+#figure 17
+#Plotting
+ggplot(data_orders ) + geom_bar(aes(x = Reliability, fill = Reliability)) + scale_fill_manual(values = c("green", "blue")) + theme(text = element_text(size=20))
+table(data_orders$Reliability)
+
+
+#Suppliers per  Manufacturing Country/per Year
+ggplot(mutate(data_orders)) + geom_bar(aes(x = Country, fill = manufacturingcountry)) +theme(text = element_text(size=20))
+
+```
+
+
+
+
+
+
+
+
+
+
+

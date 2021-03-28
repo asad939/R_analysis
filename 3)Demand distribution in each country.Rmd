@@ -1,0 +1,342 @@
+
+```{r}
+---
+title: "CaseStudy_Pharma"
+submission-date: "15/08/2020"
+output: html_document
+---
+```
+
+
+******************************************************************************************************
+This R-File contains: 
+- First overview over the data
+- 3) Analyze the demand distribution for both groups of pharmaceuticals in each country.
+******************************************************************************************************
+
+
+```{r}
+' -----------  Installing and loading the needed package  ----------- '
+
+install.packages("car")
+install.packages("corrplot")
+install.packages("dplyr")
+install.packages("forecast")
+install.packages("ggcorrplot")
+install.packages("ggplot2")
+install.packages("gridExtra")
+install.packages("mice")
+install.packages("plotly")
+install.packages("readxl")
+install.packages("sjmisc")
+install.packages("stringr")
+install.packages("tidyr")
+install.packages("tidyverse")
+```
+
+```{r}
+library(car)
+library(corrplot)
+library(dplyr)
+library(forecast)
+library(ggcorrplot)
+library(ggplot2)
+library(gridExtra)
+library(mice)
+library(plotly)
+library(readxl)
+library(sjmisc)
+library(stringr)
+library(tidyr)
+library(tidyverse)
+```
+
+
+```{r}
+' -----------  Loading the dataframe  ----------- '
+
+data_orders_simple <-  read_excel("Data & Report/data_orders_original.xlsx")
+data_orders_NA <- read_excel("Data & Report/data_orders_realNA.xlsx")
+data_orders <- read_excel("Data & Report/data_orders_w_new_variables.xlsx") #data set with extra variables for the dates of delivery and scheduled
+data_final <- read_csv("Final_Data.csv")
+
+View(data_final)
+
+```
+
+
+```{r}
+' -----------  Code the variables  ----------- '
+
+id <- c(data_orders$ID)
+projectcode <- c(data_orders$`Project Code`)
+country <- c(data_orders$Country)
+vendorincoterm <- c(data_orders$`Vendor INCO Term`)
+shipmentmode <- c(data_orders$`Shipment Mode`)
+scheduleddeliverydate <- c(data_orders$`Scheduled Delivery Date2`)
+scheduleddeliverydate <- as.Date(scheduleddeliverydate,"%Y/%m/%d" ) #transformed into data type: date
+scheduleddeliveryyear <- c(data_orders$`Year SSD`)
+scheduleddelivermonth <- c(data_orders$`Month SSD`)
+scheduleddeliveryday <- c(data_orders$`Day SSD`) 
+sortedbydeliverydate <- c(data_orders$`Sorted by Delivery Date`)
+deliveryrecordeddate <- c(data_orders$`Delivery Recorded Date2`)
+deliverydate <- as.Date(deliveryrecordeddate,"%Y/%m/%d" ) #transformed into data type: date
+deliveryrecordedyear <- c(data_orders$`Year DRD`)
+deliveryrecordedmonth <- c(data_orders$`Month DRD`)
+deliveryrecordedday <- c(data_orders$`Day DRD`)
+subclassification <- c(data_orders$`Sub Classification`)
+vendor <- c(data_orders$Vendor)
+itemdescription <- c(data_orders$`Item Description`)
+brand <- c(data_orders$Brand)
+unitofmeasure <- c(data_orders$`Unit of Measure (Per Pack)`)
+lineitemquantity <- c(data_orders$`Line Item Quantity`)
+lineitemvalue <- c(data_orders$`Line Item Value`)
+packprice <- c(data_orders$`Pack Price`)
+unitprice <- c(data_orders$`Unit Price`)
+valueofdelivery <- c(data_orders$`Total value of Delivery`)
+demand <- c(data_orders$`Demanded Units (Pills or Tests)`) #added in excel (lineitemquantity * packprice)
+manufacturingsite <- c(data_orders$`Manufacturing Site`)
+manufacturingcountry <- c(data_orders$`Manufacturing Country`) # added manually in excel (according to man.site)
+estimatedminimaldistance <- c(data_orders$`Estimated Minimal Distance Manufacturing Country to Destination`) # added manually in excel
+weight_kl <- c(data_orders$`Weight (with reference of IDxxx)` ) #cleaned/expanded in excel
+weight_klNA <- c(data_orders$`Weight (with reference of IDxxx) NA`)
+weight_regressionbasedonly <- c(data_orders$`simplest regression applied on whole data set` )
+weight_regressionbasedplusoriginal_nonnegaative <- c(data_orders$`Weight original + regression + mean (from original) of similiar if weight<=0 (for test range of +/-500 or even higher)`)
+weight_smoothedmean <-c(data_orders$`Weight Estimated due to mean of similar demand (smoothed)`)
+freightcost <- c(data_orders$`Freight Cost (USD)`) #cleaned/expanded in excel
+freightcostNA <- c(data_orders$`Freight Cost (with reference of IDxxx) NA`)
+lineiteminsurance <- c(data_orders$`Line Item Insurance (USD)`)
+
+dataset <- data.frame(id, projectcode, country, vendorincoterm, shipmentmode, scheduleddeliverydate, scheduleddeliveryday, scheduleddelivermonth, scheduleddeliveryyear, sortedbydeliverydate, deliveryrecordeddate, deliveryrecordedday, deliveryrecordedmonth, deliveryrecordedyear, subclassification, vendor, itemdescription, brand, unitofmeasure, lineitemquantity, lineitemvalue, packprice, unitprice, valueofdelivery, demand, manufacturingsite, manufacturingcountry, estimatedminimaldistance, weight_kl, weight_klNA,  weight_regressionbasedonly, weight_regressionbasedplusoriginal_nonnegaative, weight_smoothedmean, freightcostNA, lineiteminsurance)
+dataset             
+```
+
+
+```{r}
+' -----------  Code the Countries  ----------- '
+
+Southafrica <- filter(data_orders, data_orders$Country =="South Africa")  # South Africa=1406
+Nigeria <- filter(data_orders, data_orders$Country=="Nigeria")            # Nigeria=1177
+Cotedivoire <- filter(data_orders, data_orders$Country=="Côte d'Ivoire")  # Côte d'Ivoire=1077
+Uganda <- filter(data_orders, data_orders$Country=="Uganda")              # Uganda=779
+Zambia <- filter(data_orders, data_orders$Country=="Zambia")              # Zambia=683
+Mozambique <- filter(data_orders, data_orders$Country=="Mozambique")      # Mozambique=631
+Zimbabwe <- filter(data_orders, data_orders$Country=="Zimbabwe")          # Zimbabwe=538
+Tanzania <- filter(data_orders, data_orders$Country=="Tanzania")          # Tanzania=519
+Southafrica
+Nigeria
+Cotedivoire
+Uganda
+Zambia
+Mozambique
+Zimbabwe
+Tanzania
+```
+
+
+#3) Demand distribution for both groups of pharmaceuticals in each country
+#Assumption: scheduled delivery date as time of demand occuring and new variable Demanded Units (Pills or Tests) [Line Item Quantity]*[Unit of Measure (Per Pack)]
+```{r}
+' -----------  (Size of) Deliveries per Country  ----------- '
+
+#figure 3
+tapply(data_orders$`Line Item Value`,data_orders$Country,  mean)
+#figure 4
+ggplot(data_orders, aes( x =`Line Item Value`, y= Country)) + 
+  geom_boxplot() 
+#figure 6
+data_orders$year = str_sub(data_orders$`Delivery Recorded Date`,-2,-1)
+data_orders$year <- sub("^", "20", data_orders$year )
+ggplot(mutate(data_orders, Country = fct_infreq(Country)), aes(x=Country, y=`Line Item Value`,fill= `year`)) +
+  geom_bar(stat="identity", position=position_dodge())
+```
+
+
+```{r}
+' -----------  eliveries per Subclassification  ----------- '
+
+# Sub Classification
+HIVdrugs <- filter(data_orders, data_orders$`Sub Classification`=="Adult")
+HIVtest <- filter(data_orders, data_orders$`Sub Classification`=="HIV test")
+
+# Total Deliveries per Subclassification
+filter(data_orders, data_orders$`Sub Classification`=="Adult") #6,038 deliveries of pills=88.66%
+filter(data_orders, data_orders$`Sub Classification`=="HIV test") #772 deliveries of tests=11.34%
+sum(HIVdrugs$`Demanded Units (Pills or Tests)`) #8,179,142,268 pills delivered
+sum(HIVtest$`Demanded Units (Pills or Tests)`) #169,342,432 tests delivered
+mean(HIVdrugs$`Line Item Quantity`) #25784.39 packs on average per delivery
+mean(HIVdrugs$`Demanded Units (Pills or Tests)`) #1354611 pills on average per delivery
+mean(HIVtest$`Line Item Quantity`) #3529.006
+mean(HIVtest$`Demanded Units (Pills or Tests)`)
+```
+
+
+```{r}
+' -----------  Deliveries per Country  ----------- '
+
+# Deliveries per Country, percentage of pill&test deliveries of overall African Deliveries
+Southafrica_drug_deliveries <- filter(Southafrica, Southafrica$`Sub Classification`=="Adult")
+Southafrica_test_deliveries <- filter(Southafrica, Southafrica$`Sub Classification`=="HIV test")
+mean(Southafrica_drug_deliveries$`Demanded Units (Pills or Tests)` ) # 928,220.4
+mean(Southafrica_drug_deliveries$`Line Item Quantity`) #1,6355.46 
+Southafrica_drug_deliveries #1,406 deliveries = 100% = 23.29% of all deliveries of pills
+Southafrica_test_deliveries #0 deliveries = 0% = 0% of all deliveries of tests
+sum(Southafrica_drug_deliveries$`Demanded Units (Pills or Tests)`) #1,305,077,908 pills = 15.965
+sum(Southafrica_test_deliveries$`Demanded Units (Pills or Tests)`) #0 tests = 0%
+
+Nigeria_drug_deliveries <- filter(Nigeria, Nigeria$`Sub Classification`=="Adult")
+Nigeria_test_deliveries <- filter(Nigeria, Nigeria$`Sub Classification`=="HIV test")
+mean(Nigeria_drug_deliveries$`Demanded Units (Pills or Tests)` ) #1,751,077
+mean(Nigeria_test_deliveries$`Demanded Units (Pills or Tests)` ) #326,040.4
+mean(Nigeria_drug_deliveries$`Line Item Quantity`) #33,928.2
+mean(Nigeria_test_deliveries$`Line Item Quantity`) #4,891.053
+Nigeria_drug_deliveries #971 deliveries = 82.5% = 16.08% of all deliveries of pills
+Nigeria_test_deliveries #206 deliveries = 17.5% = 26.68% of all deliveries of tests
+sum(Nigeria_drug_deliveries$`Demanded Units (Pills or Tests)`) #1,700,296,096 pills = 2.08%
+sum(Nigeria_test_deliveries$`Demanded Units (Pills or Tests)`) #67,164,327 tests = 39.66%
+
+Cotedivoire_drug_deliveries <- filter(Cotedivoire, Cotedivoire$`Sub Classification`=="Adult")
+Cotedivoire_test_deliveries <- filter(Cotedivoire, Cotedivoire$`Sub Classification`=="HIV test")
+mean(Cotedivoire_drug_deliveries$`Demanded Units (Pills or Tests)` ) #779,947.1
+mean(Cotedivoire_test_deliveries$`Demanded Units (Pills or Tests)` ) #111,177.2
+mean(Cotedivoire_drug_deliveries$`Line Item Quantity`) #12,501.67
+mean(Cotedivoire_test_deliveries$`Line Item Quantity`) #1,554.383
+Cotedivoire_drug_deliveries #923 deliveries = 85.7% = 15.29% of all deliveries of pills
+Cotedivoire_test_deliveries #154 deliveries = 14.3% = 19.95% of all deliveries of tests
+sum(Cotedivoire_drug_deliveries$`Demanded Units (Pills or Tests)`) #719,891,210 pills = 8.80%
+sum(Cotedivoire_test_deliveries$`Demanded Units (Pills or Tests)`) #17,121,291 tests = 10.11%
+
+Uganda_drug_deliveries <- filter(Uganda, Uganda$`Sub Classification`=="Adult")
+Uganda_test_deliveries <- filter(Uganda, Uganda$`Sub Classification`=="HIV test")
+mean(Uganda_drug_deliveries$`Demanded Units (Pills or Tests)` ) #803,116.5
+mean(Uganda_test_deliveries$`Demanded Units (Pills or Tests)` ) #187,865.6
+mean(Uganda_drug_deliveries$`Line Item Quantity`) #16,008.7
+mean(Uganda_test_deliveries$`Line Item Quantity`) #2,431.707
+Uganda_drug_deliveries #738 deliveries = 94.74% = 12.22% of all deliveries of pills
+Uganda_test_deliveries #41 delvieries = 5.26% = 5.31% of all deliveries of tests
+sum(Uganda_drug_deliveries$`Demanded Units (Pills or Tests)`) #592,699,980 pills = 7.25%
+sum(Uganda_test_deliveries$`Demanded Units (Pills or Tests)`) #7,702,490 tests = 4.55%
+
+Zambia_drug_deliveries <- filter(Zambia, Zambia$`Sub Classification`=="Adult")
+Zambia_test_deliveries <- filter(Zambia, Zambia$`Sub Classification`=="HIV test")
+mean(Zambia_drug_deliveries$`Demanded Units (Pills or Tests)` ) #2,265,412 
+mean(Zambia_test_deliveries$`Demanded Units (Pills or Tests)` ) #238,752.1
+mean(Zambia_drug_deliveries$`Line Item Quantity`) #49,363.14
+mean(Zambia_test_deliveries$`Line Item Quantity`) #3,529.937
+Zambia_drug_deliveries #572 deliveries = 83.75% = 9.47% of all deliveries of pills
+Zambia_test_deliveries #111 deliveries = 16.25% = 14.38% of all deliveries of tests
+sum(Zambia_drug_deliveries$`Demanded Units (Pills or Tests)`) #1,295,815,540 pills = 15.84%
+sum(Zambia_test_deliveries$`Demanded Units (Pills or Tests)`) #26,501,480 tests = 15.65%
+
+Mozambique_drug_deliveries <- filter(Mozambique, Mozambique$`Sub Classification`=="Adult")
+Mozambique_test_deliveries <- filter(Mozambique, Mozambique$`Sub Classification`=="HIV test")
+mean(Mozambique_drug_deliveries$`Demanded Units (Pills or Tests)` ) #1,989,491
+mean(Mozambique_test_deliveries$`Demanded Units (Pills or Tests)` ) #255,193.6
+mean(Mozambique_drug_deliveries$`Line Item Quantity`) #3,4806.38
+mean(Mozambique_test_deliveries$`Line Item Quantity`) #3,649.011
+Mozambique_drug_deliveries #544 deliveries = 86.21% = 9.01% of all deliveries of pills
+Mozambique_test_deliveries #87 deliveries = 13.79% = 11.27% of all deliveries of tests
+sum(Mozambique_drug_deliveries$`Demanded Units (Pills or Tests)`) #1,082,283,250 pills = 13.23%
+sum(Mozambique_test_deliveries$`Demanded Units (Pills or Tests)`) #22,201,845 tests = 13.11%
+
+Zimbabwe_drug_deliveries <- filter(Zimbabwe, Zimbabwe$`Sub Classification`=="Adult")
+Zimbabwe_test_deliveries <- filter(Zimbabwe, Zimbabwe$`Sub Classification`=="HIV test")
+mean(Zimbabwe_drug_deliveries$`Demanded Units (Pills or Tests)` ) #1,752,842 
+mean(Zimbabwe_test_deliveries$`Demanded Units (Pills or Tests)` ) #176,666.2
+mean(Zimbabwe_drug_deliveries$`Line Item Quantity`) #35,380.83
+mean(Zimbabwe_test_deliveries$`Line Item Quantity`) #3,475.49
+Zimbabwe_drug_deliveries #487 delvieries = 90.52% = 8.07% of all deliveries of pills
+Zimbabwe_test_deliveries #51 deliveries = 9.48% = 6.61% of all deliveries of tests
+sum(Zimbabwe_drug_deliveries$`Demanded Units (Pills or Tests)`) #853,634,070 pills = 10.44%
+sum(Zimbabwe_test_deliveries$`Demanded Units (Pills or Tests)`) #9,009,974 tests = 5.32%
+
+Tanzania_drug_deliveries <- filter(Tanzania, Tanzania$`Sub Classification`=="Adult")
+Tanzania_test_deliveries <- filter(Tanzania, Tanzania$`Sub Classification`=="HIV test")
+mean(Tanzania_drug_deliveries$`Demanded Units (Pills or Tests)` ) #1,585,502
+mean(Tanzania_test_deliveries$`Demanded Units (Pills or Tests)` ) #160,992
+mean(Tanzania_drug_deliveries$`Line Item Quantity`) #30,205.97
+mean(Tanzania_test_deliveries$`Line Item Quantity`) #4,026.426
+Tanzania_drug_deliveries #397 deliveries = 76.49% = 6.58% of all deliveries of pills
+Tanzania_test_deliveries #122 deliveries = 23.51% = 15.80% of all deliveries of tests
+sum(Tanzania_drug_deliveries$`Demanded Units (Pills or Tests)`) #629,444,214 pills = 7.70%
+sum(Tanzania_test_deliveries$`Demanded Units (Pills or Tests)`) #19,641,025 tests = 11.60%
+
+#figure 5
+ggplot(mutate(data_orders, Country = fct_infreq(Country)), aes(x=Country, y=`Line Item Value`,fill= `Sub Classification`)) +
+  geom_bar(stat="identity", position=position_dodge())
+```
+
+
+```{r}
+' -----------  Deliveries per Country per Year  ----------- '
+
+# New variable two be able to sort the recordings due to date (as ID is not the order), then assign numbers for the order as new variable "Order due to Date", so that we can plot, model demand and forecast 
+Usageperyear_count
+
+Southafrica_deliveries_count <- Southafrica_drug_deliveries %>% count(Southafrica_drug_deliveries$`Year SSD`)
+names(Southafrica_deliveries_count)[1] <- "Year"
+names(Southafrica_deliveries_count)[2] <- "Number of Deliveries in South Africa from 2006 to 2015"
+Southafrica_deliveries_count
+
+Nigeria_deliveries_count <- Nigeria_drug_deliveries %>% count(Nigeria_drug_deliveries$`Year SSD`)
+names(Nigeria_deliveries_count)[1] <- "Year"
+names(Nigeria_deliveries_count)[2] <- "Number of Deliveries in Nigeria from 2006 to 2015"
+Nigeria_deliveries_count
+
+Cotedivoire_deliveries_count <- Cotedivoire_drug_deliveries %>% count(Cotedivoire_drug_deliveries$`Year SSD`)
+names(Cotedivoire_deliveries_count)[1] <- "Year"
+names(Cotedivoire_deliveries_count)[2] <- "Number of Deliveries in Cotedivoire from 2006 to 2015"
+Cotedivoire_deliveries_count
+
+Uganda_deliveries_count <- Uganda_drug_deliveries %>% count(Uganda_drug_deliveries$`Year SSD`)
+names(Uganda_deliveries_count)[1] <- "Year"
+names(Uganda_deliveries_count)[2] <- "Number of Deliveries in Uganda from 2006 to 2015"
+Uganda_deliveries_count
+
+Zambia_deliveries_count <- Zambia_drug_deliveries %>% count(Zambia_drug_deliveries$`Year SSD`)
+names(Zambia_deliveries_count)[1] <- "Year"
+names(Zambia_deliveries_count)[2] <- "Number of Deliveries in Zambia from 2006 to 2015"
+Zambia_deliveries_count
+
+Mozambique_deliveries_count <- Mozambique_drug_deliveries %>% count(Mozambique_drug_deliveries$`Year SSD`)
+names(Mozambique_deliveries_count)[1] <- "Year"
+names(Mozambique_deliveries_count)[2] <- "Number of Deliveries in Mozambique from 2006 to 2015"
+Mozambique_deliveries_count
+
+Zimbabwe_deliveries_count <- Zimbabwe_drug_deliveries %>% count(Zimbabwe_drug_deliveries$`Year SSD`)
+names(Zimbabwe_deliveries_count)[1] <- "Year"
+names(Zimbabwe_deliveries_count)[2] <- "Number of Deliveries in Zimbabwe from 2006 to 2015"
+Zimbabwe_deliveries_count
+
+Tanzania_deliveries_count <- Tanzania_drug_deliveries %>% count(Tanzania_drug_deliveries$`Year SSD`)
+names(Tanzania_deliveries_count)[1] <- "Year"
+names(Tanzania_deliveries_count)[2] <- "Number of Deliveries in Tanzania from 2006 to 2015"
+Tanzania_deliveries_count
+
+colors <- c("Deliveries from Southafrica"="blue", "Deliveries from Nigeria" = "cyan", "Deliveries from Cotedivoire" = "cadetblue", "Deliveries from Uganda" = "cornflowerblue", "Deliveries from Zambia" = "darkblue", "Deliveries from Mozambique" = "darkorchid", "Deliveries from Zimbabwe" = "darkslategray", "Deliveries from Tanzania" = "deeppink4")
+ggplot(Usageperyear_count, mapping = aes(x = Usageperyear_count$`Years of Deliveries from 2006-2015`, y = Usageperyear_count$n)) + geom_point() + geom_line() + labs(x="Years from 2006 to 2015", y="Number of Shipments", title="Deliveries") + scale_x_continuous(breaks=c(6:15)) + geom_line(data=Southafrica_deliveries_count, aes(x=Southafrica_deliveries_count$Year, y= Southafrica_deliveries_count$`Number of Deliveries in South Africa from 2006 to 2015`, colour="Deliveries from Southafrica")) + geom_point(data=Southafrica_deliveries_count, aes(x=Southafrica_deliveries_count$Year, y= Southafrica_deliveries_count$`Number of Deliveries in South Africa from 2006 to 2015`, colour="Deliveries from Southafrica"))+ geom_line(data=Nigeria_deliveries_count, aes(x=Nigeria_deliveries_count$Year, y= Nigeria_deliveries_count$`Number of Deliveries in Nigeria from 2006 to 2015`, colour="Deliveries from Nigeria"))+ geom_line(data=Nigeria_deliveries_count, aes(x=Nigeria_deliveries_count$Year, y= Nigeria_deliveries_count$`Number of Deliveries in Nigeria from 2006 to 2015`, colour="Deliveries from Nigeria")) + geom_line(data=Cotedivoire_deliveries_count, aes(x=Cotedivoire_deliveries_count$Year, y= Cotedivoire_deliveries_count$`Number of Deliveries in Cotedivoire from 2006 to 2015`, colour="Deliveries from Cotedivoire"))+ geom_line(data=Cotedivoire_deliveries_count, aes(x=Cotedivoire_deliveries_count$Year, y= Cotedivoire_deliveries_count$`Number of Deliveries in Cotedivoire from 2006 to 2015`, colour="Deliveries from Cotedivoire")) + geom_line(data=Uganda_deliveries_count, aes(x=Uganda_deliveries_count$Year, y= Uganda_deliveries_count$`Number of Deliveries in Uganda from 2006 to 2015`, colour="Deliveries from Uganda"))+ geom_line(data=Uganda_deliveries_count, aes(x=Uganda_deliveries_count$Year, y= Uganda_deliveries_count$`Number of Deliveries in Uganda from 2006 to 2015`, colour="Deliveries from Uganda")) + geom_line(data=Zambia_deliveries_count, aes(x=Zambia_deliveries_count$Year, y= Zambia_deliveries_count$`Number of Deliveries in Zambia from 2006 to 2015`, colour="Deliveries from Zambia"))+ geom_line(data=Zambia_deliveries_count, aes(x=Zambia_deliveries_count$Year, y= Zambia_deliveries_count$`Number of Deliveries in Zambia from 2006 to 2015`, colour="Deliveries from Zambia")) + geom_line(data=Mozambique_deliveries_count, aes(x=Mozambique_deliveries_count$Year, y= Mozambique_deliveries_count$`Number of Deliveries in Mozambique from 2006 to 2015`, colour="Deliveries from Mozambique"))+ geom_line(data=Mozambique_deliveries_count, aes(x=Mozambique_deliveries_count$Year, y= Mozambique_deliveries_count$`Number of Deliveries in Mozambique from 2006 to 2015`, colour="Deliveries from Mozambique")) + geom_line(data=Zimbabwe_deliveries_count, aes(x=Zimbabwe_deliveries_count$Year , y= Zimbabwe_deliveries_count$`Number of Deliveries in Zimbabwe from 2006 to 2015`, colour="Deliveries from Zimbabwe"))+ geom_line(data=Zimbabwe_deliveries_count, aes(x=Zimbabwe_deliveries_count$Year , y= Zimbabwe_deliveries_count$`Number of Deliveries in Zimbabwe from 2006 to 2015`, colour="Deliveries from Zimbabwe")) + geom_line(data=Tanzania_deliveries_count, aes(x=Tanzania_deliveries_count$Year , y= Tanzania_deliveries_count$`Number of Deliveries in Tanzania from 2006 to 2015`, colour="Deliveries from Tanzania"))+ geom_line(data=Tanzania_deliveries_count, aes(x=Tanzania_deliveries_count$Year , y= Tanzania_deliveries_count$`Number of Deliveries in Tanzania from 2006 to 2015`, colour="Deliveries from Tanzania"))
+
+
+#does not work, no idea why, do it step by step
+#countries_deliveries <- full_join(Southafrica_deliveries_count, Nigeria_deliveries_count, Cotedivoire_deliveries_count, Uganda_deliveries_count, Zambia_deliveries_count, Mozambique_deliveries_count, Zimbabwe_deliveries_count, Tanzania_deliveries_count, by="Year")
+countries_deliveries1 <- full_join(Southafrica_deliveries_count, Nigeria_deliveries_count, by="Year")
+countries_deliveries2 <- full_join(countries_deliveries1, Cotedivoire_deliveries_count, by="Year")
+countries_deliveries3 <- full_join(countries_deliveries2, Uganda_deliveries_count, by="Year")
+countries_deliveries4 <- full_join(countries_deliveries3, Zambia_deliveries_count, by="Year")
+countries_deliveries5 <- full_join(countries_deliveries4, Mozambique_deliveries_count, by="Year")
+countries_deliveries6 <- full_join(countries_deliveries5, Zimbabwe_deliveries_count, by="Year")
+countries_deliveries7 <- full_join(countries_deliveries6, Tanzania_deliveries_count, by="Year" )
+countries_deliveries <- countries_deliveries7[order(countries_deliveries7$Year, decreasing=FALSE), ]
+countries_deliveries
+#write.table(countries_deliveries, file="country_totalnumberofdeliveries.csv", sep = ";", row.names=F)
+```
+
+
+
+
+```{r}
+#Goal: Sum over Demand for every Month for every country
+#I want a data.frame for every country with c=(year, sum of deliveries, sum of pills/tests)
+
+```
+

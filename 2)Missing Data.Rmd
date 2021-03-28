@@ -1,0 +1,750 @@
+
+```{r}
+---
+title: "CaseStudy_Pharma"
+submission-date: "15/08/2020"
+output: html_document
+---
+```
+
+
+******************************************************************************************************
+This R-File contains:
+- Missing values analysis + Data Cleaning
+- 2) Derive rough estimates of the transportation costs for each relation.
+******************************************************************************************************
+
+
+```{r}
+' -----------  Installing and loading the needed package  ----------- '
+
+install.packages("car")
+install.packages("caTools")
+install.packages("corrplot")
+install.packages("dplyr")
+install.packages("forecast")
+install.packages("ggcorrplot")
+install.packages("ggplot2")
+install.packages("gridExtra")
+install.packages("jtools")
+install.packages("lmtest")
+install.packages("mice")
+install.packages("plotly")
+install.packages("psych")
+install.packages("readxl")
+install.packages("sjmisc")
+install.packages("stringr")
+install.packages("tidyr")
+install.packages("tidyverse")
+install.packages("mnormt")
+install.packages("GmAMisc")
+install.packages("ggstatsplot")
+```
+
+```{r}
+library(car)
+library(caTools)
+library(corrplot)
+library(dplyr)
+library(forecast)
+library(ggcorrplot)
+library(ggplot2)
+library(gridExtra)
+library(jtools)
+library(lmtest) #for bptest
+library(mice)
+library(plotly)
+library(psych) 
+library(readxl)
+library(sjmisc)
+library(stringr)
+library(tidyr)
+library(tidyverse)
+library(mnormt)
+```
+
+
+```{r}
+' -----------  Loading the dataframe  ----------- '
+data_orders_NA <- read_excel("~/Desktop/XYZ/data_orders_realNA.xlsx")
+data_orders <- read_excel("~/Desktop/XYZ/data_orders_w_new_variables.xlsx") #data set with extra variables for the dates of delivery and scheduled
+
+#View(data_orders)
+```
+
+
+```{r}
+' -----------  Dealing with implicitely missing data  ----------- '
+#Creating a new dataset to test on
+Data = data_orders
+
+#missing values
+#If missing data for a variable is more than 5% then you probably should leave that feature or sample out. 
+sapply(data_orders_NA, function(x) sum(is.na(x)))
+#Shipment Mode: 330 NA = 4.85% (no problem, could stay as it is)
+#Line Item Insurance (USD): 212 NA = 3.11% (no problem, could stay as it is)
+#Vendor INCO Term: 4102 NA = 60.23% - action required
+#Weight (Kilograms): 2697 NA = 39.6% - action required
+#Freight Cost (USD): 2871 NA = 42.16% - action required
+
+#Transforming variable names
+names(Data) <- gsub(" ", "_", names(Data))
+names(Data) <- gsub("[_(]", "_", names(Data))
+names(Data) <- gsub("[)]", "_", names(Data))
+
+
+# We assume Lineiteminsurance beeing zero if not given
+#Replacing missing values in Line Item Insurance with 0
+Data$Line_Item_Insurance__USD_[is.na(Data$Line_Item_Insurance__USD_)] <- 0
+
+#Transforming Shipment_Mode as factor
+Data$Shipment_Mode = as.factor(Data$Shipment_Mode)
+Data$Shipment_Mode[Data$Shipment_Mode == "N/A"] <- NA
+
+#INCOTERM
+Data$Vendor_INCO_Term = as.factor(Data$Vendor_INCO_Term)
+Data$Vendor_INCO_Term[Data$Vendor_INCO_Term == "N/A - From RDC"] <- NA
+
+
+#Replacing missing values in Freight cost
+#if the name contains "See ID", replace it with the corresponding value to the ID 
+t = nrow(Data)
+seq1 = seq(1,t, by = 1)
+for (j in seq1){ if (str_contains(Data$Freight_Cost__USD_[j],"See")){
+  Data$Freight_Cost__USD_[j] = Data$Freight_Cost__with_reference_of_IDxxx_[j]}}
+#if the freight cost is included in commodity costs, then change it to NA
+Data$Freight_Cost__USD_[Data$Freight_Cost__USD_ == "Freight Included in Commodity Cost"] <- NA
+Data$Freight_Cost__USD_[Data$Freight_Cost__USD_ == "Invoiced Separately"] <- NA
+
+#Replacing values in Weight(Kilograms)
+#If the value of Weight contains "See ID", replace it with the corresponding value to the ID
+r = nrow(Data)
+seq2 = seq(1,r, by = 1)
+for (j in seq2){ if (str_contains(Data$Weight__Kilograms_[j],"See")){
+      Data$Weight__Kilograms_[j] = Data$Weight__with_reference_of_IDxxx_[j]}}
+#If the weight is marked as captured separately, mark it as missing
+Data$Weight__Kilograms_[Data$Weight__Kilograms_ == "Weight Captured Separately"] <-NA
+#Transform it to numeric
+Data$Weight__Kilograms_ = as.numeric(Data$Weight__Kilograms_)
+
+#after replacing references (e.g. see ID#2931), we have less missing values but still many
+sapply(Data, function(x) sum(is.na(x))) #Freight costs: 1462NA = 21.47% #Weight: 1307NA = 19.19%
+view(Data)
+
+```
+
+
+
+```{r}
+' -----------  Code the variables  ----------- '
+
+id <- c(Data$ID)
+projectcode <- c(Data$Project_Code)
+country <- c(Data$Country)
+vendorincoterm <- c(Data$Vendor_INCO_Term)
+shipmentmode <- c(Data$Shipment_Mode)
+scheduleddeliverydate <- c(Data$Scheduled_Delivery_Date2)
+scheduleddeliverydate <- as.Date(scheduleddeliverydate,"%Y/%m/%d" ) #transformed into data type: date
+scheduleddeliveryyear <- c(Data$Year_SSD)
+scheduleddelivermonth <- c(Data$Month_SSD)
+scheduleddeliveryday <- c(Data$Day_SSD) 
+sortedbydeliverydate <- c(Data$Sorted_by_Delivery_Date)
+deliveryrecordeddate <- c(Data$Delivery_Recorded_Date2)
+deliverydate <- as.Date(deliveryrecordeddate,"%Y/%m/%d") #transformed into data type: date
+deliveryrecordedyear <- c(Data$Year_DRD)
+deliveryrecordedmonth <- c(Data$Month_DRD)
+deliveryrecordedday <- c(Data$Day_DRD)
+subclassification <- c(Data$Sub_Classification)
+vendor <- c(Data$Vendor)
+itemdescription <- c(Data$Item_Description)
+brand <- c(Data$Brand)
+unitofmeasure <- c(Data$Unit_of_Measure__Per_Pack_)
+lineitemquantity <- c(Data$Line_Item_Quantity)
+lineitemvalue <- c(Data$Line_Item_Value)
+packprice <- c(Data$Pack_Price)
+unitprice <- c(Data$Unit_Price)
+valueofdelivery <- c(Data$Total_value_of_Delivery)
+demand <- c(Data$Demanded_Units__Pills_or_Tests_) #added in excel (lineitemquantity * packprice)
+manufacturingsite <- c(Data$Manufacturing_Site)
+manufacturingcountry <- c(Data$Manufacturing_Country) # added manually in excel (according to man.site)
+estimatedminimaldistance <- c(Data$Estimated_Minimal_Distance_Manufacturing_Country_to_Destination) # added manually in excel
+weight <- c(Data$Weight__Kilograms_)
+weight_kl <- c(Data$Weight__with_reference_of_IDxxx_) #cleaned/expanded in excel
+weight_klNA <- c(Data$Weight__with_reference_of_IDxxx__NA)
+weight_regressionbasedonly <- c(Data$simplest_regression_applied_on_whole_data_set)
+weight_regressionbased <- c(Data$`Weight_original_+_Regression__2245.156962+_0.109744*lineitemquantity_for_drugs__q0.001___&__499.719501971+0.138671589*lineitemquantity-4.826180831*unitofmeasure+0.003500737*lineitemvalue_`)
+weight_smoothedmean <- c(Data$`Weight_original_+__by_mean_of_similiar`)
+weight_smoothedmeanonly <-c(Data$Weight_Estimated_due_to_mean_of_similar_demand__smoothed_)
+weight_final <- c(Data$`Weight_original_+__by_mean_of_similiar`)
+freightcost <- c(Data$Freight_Cost__USD_) #cleaned/expanded in excel
+freightcostNA <- c(Data$Freight_Cost__with_reference_of_IDxxx__NA)
+lineiteminsurance <- c(Data$Line_Item_Insurance__USD_)
+
+dataset <- data.frame(id, projectcode, country, vendorincoterm, shipmentmode, scheduleddeliverydate, scheduleddeliveryday, scheduleddelivermonth, scheduleddeliveryyear, sortedbydeliverydate, deliveryrecordeddate, deliveryrecordedday, deliveryrecordedmonth, deliveryrecordedyear, subclassification, vendor, itemdescription, brand, unitofmeasure, lineitemquantity, lineitemvalue, packprice, unitprice, valueofdelivery, demand, manufacturingsite, manufacturingcountry, estimatedminimaldistance, weight, weight_kl, weight_klNA, weight_regressionbased,  weight_regressionbasedonly,weight_smoothedmean, weight_smoothedmeanonly, weight_final, freightcostNA, lineiteminsurance)
+
+dataset             
+```
+
+
+
+```{r}
+' -----------  Preparation for Dealing with explicitely missing data  ----------- '
+
+#Subsetting the original dataset to obtain a dataset with no missing values for weight, to train the model on
+Train_Weight = subset(Data, is.na(Weight__Kilograms_) == FALSE)
+Train_Weight #5,503 observations
+
+#Subsetting the original dataset to obtain a dataset with only missing values for weight, to predict them later using the model
+Test_Weight = subset(Data, is.na(Weight__Kilograms_) == TRUE)
+Test_Weight #1,307 observations
+
+#Creating a new variable to facilitate visualization later
+Train_Weight$type = as.factor("Train_Weight")
+Test_Weight$type = as.factor("Test_Weight")
+```
+
+
+
+```{r}
+' -----------  Dealing with explicitely missing data; Weight for Drugs  ----------- '
+
+
+
+
+
+#Regression Model for Weight
+#split data sets due to subclassification (as tests and drugs may differ significantly from weight)
+dataset_drugs <- filter(dataset, dataset$subclassification=="Adult")
+
+##1. Simple Linear Regression with (unitofmeasure +) lineitemquantity OR demand as regressor(s)
+weight_drugs_modeled0 <- lm(weight ~ lineitemquantity + unitofmeasure, data=dataset_drugs)
+summary(weight_drugs_modeled0) #Weight=2040 + 0.1328*lineitemquantity+1.446*unitofmeasure
+summary(weight_drugs_modeled0)$coefficient #Adj.R^2=0.3686 
+weight_drugs_modeled1 <- lm(weight ~ lineitemquantity, data=dataset_drugs)
+#unitofmeasure was not significant, drop this variable
+summary(weight_drugs_modeled1)#Adj.R^2= 0.3687 #Weight = 2156 + 0.1325*lineitemquantity
+#or take demand as it incorporates lineitemquantity*unitofmeasure
+weight_drugs_modeled2 <- lm(weight ~ demand, data=dataset_drugs)
+summary(weight_drugs_modeled2) #Adj.R^2=0.3021 #Weight = 2413 + 0.002391*lineitemquantity
+#using lineitemquantity is better than demand, but still not satisfying
+
+
+##2. Cutting the Outliers of weight before running a Simple Linear Regression
+quantile(weight, probs = c(0.005, 0.01, 0.02, 0.05, 0.95, 0.98, 0.99, 0.995), na.rm=TRUE) #0.5%=4.00;  1%=7.00;  99%=64835.22;  99.5%=74106.41
+boxplot(weight)
+#excluding 5% quantiles
+weight_drugs_q0.05 <- filter(dataset_drugs, dataset_drugs$weight<21988.8 & dataset_drugs$weight>47)
+weight_drugs_modeled_q0.05 <- lm(weight ~ lineitemquantity, data=weight_drugs_q0.05)
+summary(weight_drugs_modeled_q0.05)             #Adj.R^2= 0.376 
+#excluding 2% quantiles
+weight_drugs_q0.02 <- filter(dataset_drugs, dataset_drugs$weight<37992 & dataset_drugs$weight>15) 
+weight_drugs_modeled_q0.02 <- lm(weight ~ lineitemquantity, data=weight_drugs_q0.02)
+summary(weight_drugs_modeled_q0.02)             #Adj.R^2= 0.3883
+####################################################################c#####################################
+#excluding 1% quantiles
+weight_drugs_q0.01 <- filter(dataset_drugs, dataset_drugs$weight<64835 & dataset_drugs$weight>7)
+weight_drugs_modeled_q0.01 <- lm(weight ~ lineitemquantity, data=weight_drugs_q0.01) #take this one
+summary(weight_drugs_modeled_q0.01)             #Adj.R^2=0.4034 
+summary(weight_drugs_modeled_q0.01)$coefficient #Weight = 2245.156962  + 0.109744*lineitemquantity
+#########################################################################################################
+#or use demand as regressor (gets worse, so keep the latter)
+weight_drugs_modeled_q0.01_demandasregressor  <- lm(weight ~ demand, data=weight_drugs_q0.01)
+summary(weight_drugs_modeled_q0.01_demandasregressor) #Adj.R^2=0.3602
+#excluding 0.5% quantiles
+weight_drugs_q0.005 <- filter(dataset_drugs, dataset_drugs$weight>4 &  dataset_drugs$weight<74106) 
+weight_drugs_modeled_q0.005 <- lm(weight ~ lineitemquantity, data=weight_drugs_q0.005)
+summary(weight_drugs_modeled_q0.005)            #Adj.R^2= 0.3738
+#with 1% cutted outliers, the regression model fits better R^2:  0.4034 > 0.3602 or 0.3738 or 0.3883
+
+##3. Apply Higher Order Regression / Multivariate Polynomial Regression
+weight_drugs_modeled_poly2 <- lm(weight ~ lineitemquantity + I(lineitemquantity^2), data=dataset_drugs) 
+summary(weight_drugs_modeled_poly2)     #Adj. R^2= 0.3694
+#same as following notation: lm(weight ~ poly(lineitemquantity, 2, raw=TRUE), data=dataset_drugs)
+#higher order does not improve R^2
+
+
+##4. Check first correlation matrix, then apply Simple Linear Regression including sig. variables
+#For variables that can be interpreted ordinal, we can perform a spearman correlation 
+correlation <- data.frame(subclassification, sortedbydeliverydate, unitofmeasure, lineitemquantity, lineitemvalue, demand, estimatedminimaldistance, weight, freightcostNA, lineiteminsurance) 
+corr_drugs <- filter(correlation, correlation$subclassification=="Adult")
+corr_drugs$subclassification <- NULL
+corr_drugs$demand <- NULL
+cor.ci(corr_drugs, method="spearman") #lineitemquantity 0.74, unitofmeasure -0.12 
+corr_drugs <- filter(correlation, correlation$subclassification=="Adult")
+corr_drugs$subclassification <- NULL
+corr_drugs$lineitemquantity <- NULL
+corr_drugs$unitofmeasure <- NULL
+cor.ci(corr_drugs, method="spearman") #demand 0.74
+#Use unitofmeasure+lineitemquantity OR demand, to avoid collinearity in the model, as correlations with weight are similar, try both:
+#demand - better one
+weight_drugs_modeled <- lm(weight ~  lineitemvalue + demand + estimatedminimaldistance + freightcostNA + lineiteminsurance, data=dataset_drugs)
+summary(weight_drugs_modeled)             #Adj.R^2 = 0.5521 #already removed sortedbydate as insignificant
+#lineitemquantity 
+weight_drugs_modeled <- lm(weight ~  lineitemquantity + lineitemvalue + estimatedminimaldistance+ freightcostNA + lineiteminsurance, data=dataset_drugs)
+summary(weight_drugs_modeled)             #Adj.R^2 = 0.5504 #already removed unitofmeasure as insignificant
+#Including more variables improves the regression result
+#Is already better than polynomial regression
+
+
+###Now mix the strategies 1./2./3./4.
+##A. Cutted Outliers (2.) & Higher Order Regression(3.)
+weight_drugs_modeled_poly2_q0.01 <- lm(weight ~ poly(lineitemquantity, 2, raw=TRUE), data=weight_drugs_q0.01)
+summary(weight_drugs_modeled_poly2_q0.01) #Adjusted R-squared:  0.3786 
+weight_drugs_modeled_poly3_q0.01 <- lm(weight ~ poly(lineitemquantity, 3, raw=TRUE), data=weight_drugs_q0.01)
+summary(weight_drugs_modeled_poly3_q0.01) #Adjusted R-squared:  0.3784
+ggplot(dataset_drugs, mapping=aes(x=weight, y=lineitemquantity))+geom_point()+geom_line()+stat_smooth(method=lm, formular= weight ~ lineitemquantity + I(lineitemquantity^2))
+#is worse than 4.
+
+
+##B. Correlation(4.) & cutted outliers (2.)
+#demand
+weight_drugs_modeled_demand_test <- lm(weight ~  lineitemvalue + demand + estimatedminimaldistance, data=weight_drugs_q0.01)                       #Adj.R^2= 0.4586 
+summary(weight_drugs_modeled_demand_test) #-1359+0.007889*lineitemvalue+0.0009980*demand+0.3695*estimatedminimaldistance 
+weight_drugs_modeled_demand <- lm(weight ~  lineitemvalue + demand + estimatedminimaldistance + freightcostNA + lineiteminsurance, data=weight_drugs_q0.01)   
+summary(weight_drugs_modeled_demand)           #Adj.R^2= 0.5843
+#-3475+0.01389*lineitemvalue+0.0007014*demand+0.4461*estimatedminimaldistance+0.1973*freightcostNA- 5.254*lineiteminsurance 
+weight_drugs_modeled_quantity <- lm(weight ~  lineitemquantity + lineitemvalue + estimatedminimaldistance + freightcostNA + lineiteminsurance, data=weight_drugs_q0.01)
+summary(weight_drugs_modeled_quantity)         #Adj.R^2= 0.5769
+#demand is best so far
+format(2.522031e-04, scientific = FALSE)
+
+
+##C. Correlation (4.) & Higher Order Regression (3.)
+#demand
+weight_drugs_modeled0_poly2_demand <- lm(weight ~ lineitemvalue + I(lineitemvalue^2) + demand + I(demand^2) + estimatedminimaldistance + I(estimatedminimaldistance^2) + freightcostNA + I(freightcostNA^2) + lineiteminsurance + I(lineiteminsurance^2), data=dataset_drugs) 
+summary(weight_drugs_modeled0_poly2_demand)   #Adjusted R-squared: 0.5606
+#lineitemquantity
+weight_drugs_modeled0_poly2_quantity <- lm(weight ~ lineitemquantity + I(lineitemquantity^2) + lineitemvalue + I(lineitemvalue^2) + estimatedminimaldistance + I(estimatedminimaldistance^2) + freightcostNA + I(freightcostNA^2) + lineiteminsurance + I(lineiteminsurance^2), data=dataset_drugs) 
+summary(weight_drugs_modeled0_poly2_quantity)   #Adjusted R-squared: 0.5595
+
+
+##D.  Correlation (4.) & cutted outliers (2.) & Higher Order Regression (3.)
+#demand
+weight_drugs_modeled0_poly2_cuttedoutliers_demand  <- lm(weight ~ lineitemvalue + I(lineitemvalue^2) + demand + I(demand^2) + estimatedminimaldistance + I(estimatedminimaldistance^2) + freightcostNA + I(freightcostNA^2) + lineiteminsurance + I(lineiteminsurance^2), data=weight_drugs_q0.01) 
+summary(weight_drugs_modeled0_poly2_cuttedoutliers_demand)   #Adjusted R-squared: 0.6011 #best until now! 
+coefficients(weight_drugs_modeled0_poly2_cuttedoutliers_demand)
+# weight=-894.1175+0.01424633*lineitemvalue-0.0000000001423445)*I(lineitemvalue^2)+0.0008594882*demand-0.00000000001428062*I(demand^2)-0.3128931*estimatedminimaldistance+0.00003628249*I(estimatedminimaldistance^2)+0.3287742*freightcostNA-0.000001625919*I(freightcostNA^2)-6.339050*lineiteminsurance+0.0002522031*I(lineiteminsurance^2)
+weight_drugs_modeled0_poly2_cuttedoutliers_demand  <- lm(weight ~ poly(lineitemvalue,2, raw=TRUE) + poly(demand,2, raw=TRUE) + poly(estimatedminimaldistance,2, raw=TRUE) + poly(freightcostNA,2, raw=TRUE) + poly(lineiteminsurance,2, raw=TRUE), data=weight_drugs_q0.01) 
+summary(weight_drugs_modeled0_poly2_cuttedoutliers_demand) #Adjusted R-Squared=0.6011
+dataset_drugs
+predict(weight_drugs_modeled0_poly2_cuttedoutliers_demand)
+#format(2.522031e-04, scientific = FALSE)
+#lineitemquantity
+weight_drugs_modeled0_poly2_cuttedoutliers_quantity <- lm(weight ~ lineitemquantity + I(lineitemquantity^2) + lineitemvalue + I(lineitemvalue^2) + estimatedminimaldistance + I(estimatedminimaldistance^2) + freightcostNA + I(freightcostNA^2) + lineiteminsurance + I(lineiteminsurance^2), data=weight_drugs_q0.01) 
+summary(weight_drugs_modeled0_poly2_cuttedoutliers_quantity)   #Adjusted R-squared: 0.5943
+plot(fitted(weight_drugs_modeled0_poly2_cuttedoutliers_demand), residuals(weight_drugs_modeled0_poly2_cuttedoutliers_demand))
+
+
+
+#REGRESSION PLOT
+# D (weight_drugs_modeled0_poly2_cuttedoutliers_demand, R^2=0.6011) is the best
+# B is a way simpler (weight_drugs_modeled_demand, R^2= 0.5843) 
+# 2 is even simpler and also quite good (weight_drugs_modeled_q0.01, R^2=0.4034), so we take this one
+
+
+#REGRESSION PLOT OF 2
+weight_function_2 <- function(lineitemquantity) 2245.156962+0.109744*lineitemquantity
+ggplot(dataset_drugs, mapping=aes(x=lineitemquantity, y=weight)) + geom_point() + geom_line() + stat_function(fun = weight_function_2, col="red") + xlim(0, 400000) + ggtitle("Regression of Weight of Drugs")
+#Diagnostics
+effect_plot(weight_drugs_modeled_q0.01, pred=lineitemquantity, interval=TRUE, partial.residuals=TRUE)
+#distribution is captured well by regression
+plot(weight_drugs_modeled_q0.01)
+
+#Residuals vs Fitted: there should be no strong patterns and no outliers since the residuals are randomly distributed around zero. 
+#Most of our residuals are close to 0 (as we can see on the red line). Looks relatively random (only many observations for low weight, that explains why there a bunch at the left side)
+
+#Normal Q-Q: Residuals should be normally distributed around the diagonal line - this does not hold for all observations: we see the results of random fluctuations at the extreme ends (heavy tailed line). Q-Qplot shows the violation of normality.
+
+#Scale-Location: This plot shows if residuals are spread equally along the ranges of predictors. This is how you can check the assumption of equal variance (homoscedasticity). It’s good if you see a horizontal line with equally (randomly) spread points. Scale-location plot shows a correlation trend between fitted and squareroot of standardized residual, as our p-value is <0.05 we must reject the null hypothesis of homoscedasticity! 
+bptest(weight_drugs_modeled_q0.01) # = 0.00000000000000022 < 0.05
+
+#Residuals vs Leverage: Helps us to find influential cases (i.e., subjects) if any. Not all outliers are influential in linear regression analysis. Even though data have extreme values, they might not be influential to determine a regression line. Patterns are not relevant. We watch out for outlying values at the upper right corner or at the lower right corner: cases can be influential against a regression line. We don't have cases outside the dashed lines (Cook’s distance: cases are outside the lines mean high Cook’s distance scores), thus no cases are influential to the regression results. That's good.
+
+#Interpretation: https://towardsdatascience.com/log-book-practical-guide-to-linear-polynomial-regression-in-r-e0ed2e7f8031 and https://data.library.virginia.edu/diagnostic-plots/
+
+#Regression even for existing values; mean of similar observations (similar demand - take the weight)
+#Plotted values from excel
+ggplot(dataset_drugs, mapping=aes(x=weight, y=lineitemquantity), main="weight of deliveries of drugs") + geom_point() + xlim(0,150000) + geom_line() + 
+ geom_line(data=dataset_drugs, aes(x=weight_smoothedmeanonly, y=lineitemquantity, color="Smoothed Estimation Excel on the whole dataset"),alpha = 0.5, size=1) + 
+  geom_line(data=dataset_drugs, aes(x=weight_regressionbasedonly, y=lineitemquantity, color="Regression Estimation on whole dataset"),alpha = 0.5, size=1) + ggtitle("Comparison Linear Regression with Smoothed Mean for Weight of Drugs") + theme(text = element_text(size=20))
+
+#weight estimated for whole data set only by smoothed mean (excel)
+ggplot(dataset_drugs, mapping=aes(x=weight, y=lineitemquantity), main="weight of deliveries of drugs") + geom_point() + xlim(0,150000) + geom_line() + geom_line(data=dataset_drugs, aes(x=weight_smoothedmeanonly, y=lineitemquantity, color="Smoothed Estimation Excel"),alpha = 0.5, size=1) + ggtitle("Smoothed Mean for Weight of Drugs")+ theme(text = element_text(size=20))
+#weight ORIGINAL + estimated for whole data set only by smoothed mean (excel)
+ggplot(dataset_drugs, mapping=aes(x=weight, y=lineitemquantity), main="weight of deliveries of drugs") + geom_point() + xlim(0,150000) + geom_line() + geom_line(data=dataset_drugs, aes(x=weight_smoothedmean, y=lineitemquantity, color="Smoothed Estimation Excel"),alpha = 0.5, size=1) + ggtitle("Original Data + Smoothed Mean for Weight of Drugs")+ theme(text = element_text(size=20))
+
+#weight estimated for whole data set only by Regression weight_function_2
+ggplot(dataset_drugs, mapping=aes(x=weight, y=lineitemquantity), main="weight of deliveries of drugs") + geom_point() + xlim(0,150000) + geom_line() + geom_line(data=dataset_drugs, aes(x=weight_regressionbasedonly, y=lineitemquantity, color="Regression Estimation on whole dataset"),alpha = 0.5, size=1) + ggtitle("Linear Regression for Weight of Drugs")+ theme(text = element_text(size=20))
+#weight ORIGINAL + estimated for whole data set only by Regression weight_function_2
+ggplot(dataset_drugs, mapping=aes(x=weight, y=lineitemquantity), main="Original Data + Regression of Weight of Drugs") + geom_point() + xlim(0,150000) + geom_line() + geom_line(data=dataset_drugs, aes(x=weight_regressionbased, y=lineitemquantity, color="Regression Estimation on whole dataset"),alpha = 0.5, size=1) + ggtitle("Original Data + Linear Regression of Weight of Drugs") + theme(text = element_text(size=20))
+
+
+#Because of high variety, the smoothed mean insertion seems to perform better compared to the Regression
+```
+
+
+
+```{r}
+' -----------  Dealing with explicitely missing data; Weight for Tests  ----------- '
+
+#Second:Regression for Weight of Tests
+dataset_tests <- filter(dataset, dataset$subclassification=="HIV test")
+corr_tests <- filter(correlation, correlation$subclassification=="HIV test")
+corr_tests$subclassification <- NULL
+cor.ci(corr_tests, method="spearman") #lineitemquantity0.9; demand 0.73
+#use lineitemquantity instead of demand
+
+##1. Simple Linear Regression with lineitemquantity & unitofmeasure
+weight_tests_modeled0 <- lm(weight_klNA~lineitemquantity+unitofmeasure ,data=dataset_tests)
+summary(weight_tests_modeled0) #Adj.R^2=-0.0007447 - couldnt be worse
+#OR
+weight_tests_modeled2 <- lm(weight_klNA ~ demand, data=dataset_tests)
+summary(weight_tests_modeled2)       #Adj.R^2=-0.001207 - couldnt be worse
+#OR better with more variables
+weight_tests_modeled0 <- lm(weight_klNA ~ lineitemquantity + unitofmeasure + sortedbydeliverydate + lineitemvalue + estimatedminimaldistance + freightcostNA + lineiteminsurance,data=dataset_tests)
+summary(weight_tests_modeled0)       #Adj.R^2 = 0.09213 very poor estimation
+
+#2. Try Polynomial models
+weight_tests_modeled_poly2 <- lm(weight_klNA ~ lineitemquantity + I(lineitemquantity^2) + unitofmeasure + I(unitofmeasure^2) + sortedbydeliverydate + I(sortedbydeliverydate^2) + lineitemvalue + I(lineitemvalue^2) + estimatedminimaldistance + I(estimatedminimaldistance^2) + freightcostNA + I(freightcostNA^2) + lineiteminsurance+ I(lineiteminsurance^2), data=dataset_tests) 
+summary(weight_tests_modeled_poly2)  #Adj. R^2 = 0.14 
+weight_tests_modeled_poly3 <- lm(weight_klNA ~ lineitemquantity + I(lineitemquantity^2) + I(lineitemquantity^3) + unitofmeasure + I(unitofmeasure^2) + I(unitofmeasure^3)  + sortedbydeliverydate + I(sortedbydeliverydate^2) + I(sortedbydeliverydate^3)  + lineitemvalue + I(lineitemvalue^2) + I(lineitemvalue^3) + estimatedminimaldistance + I(estimatedminimaldistance^2) + I(estimatedminimaldistance^3) + freightcostNA + I(freightcostNA^2) + I(freightcostNA^3) + lineiteminsurance + I(lineiteminsurance^2) + I(lineiteminsurance^3), data=dataset_tests) 
+summary(weight_tests_modeled_poly3)  #Adj. R^2 = 0.1548, but lineitemquantity, est.distance, freight costs are insignificant:
+weight_tests_modeled_poly3 <- lm(weight_klNA ~ unitofmeasure + I(unitofmeasure^2) + I(unitofmeasure^3)  + sortedbydeliverydate + I(sortedbydeliverydate^2) + I(sortedbydeliverydate^3)  + lineitemvalue + I(lineitemvalue^2) + I(lineitemvalue^3) + lineiteminsurance + I(lineiteminsurance^2) + I(lineiteminsurance^3), data=dataset_tests) 
+summary(weight_tests_modeled_poly2)  #Adj.R^2 = 0.14
+
+#investigate distribution
+ggplot(dataset_tests, mapping=aes(y=lineitemquantity, x=weight)) + geom_point() + geom_line()
+#3. ggplot: for tests there are only few observations for high weight, this could infect quality of regression.
+ggplot(dataset_tests, mapping=aes(x=weight_klNA, y=lineitemquantity))+xlim(0,20000) +geom_point()+geom_line()+stat_smooth()
+quantile(dataset_tests$weight_klNA, probs = c(0.005, 0.01, 0.05, 0.95, 0.99, 0.995), na.rm=TRUE) #0.5%=4.5, 1% = 10.25, 5% = 41.00, 95% = 3555.75, 99%=7395, 99.5%=11421.75
+weight_tests_q0.005<- filter(dataset_tests, dataset_tests$weight_klNA<11421.75&dataset_tests$weight_klNA>4.5)
+weight_tests_q0.01 <- filter(dataset_tests, dataset_tests$weight_klNA<7395&dataset_tests$weight_klNA>10.25)
+weight_tests_q0.05 <- filter(dataset_tests, dataset_tests$weight_klNA<3555.75&dataset_tests$weight_klNA>41)
+ggplot(weight_tests_q0.01, mapping=aes(x=weight_klNA, y=lineitemquantity))+geom_point()+geom_line()+stat_smooth() 
+ggplot(weight_tests_q0.005, mapping=aes(x=weight_klNA, y=lineitemquantity))+geom_point()+geom_line()+stat_smooth()
+#linear regression should work out
+
+#without 0.5% quantiles
+weight_tests_modeled_simple_q0.005 <- lm(weight_klNA ~ lineitemquantity,data=weight_tests_q0.005) #Adj.R^2=0.5846 
+summary(weight_tests_modeled_simple_q0.005) #Adj. R^2 = 0.5846
+function_weight_tests_modeled_simple_q0.005 <- function(lineitemquantity) 434.3033946 + 0.2502178*lineitemquantity
+ggplot(dataset_tests, mapping=aes(x=weight_klNA, y=lineitemquantity)) + geom_point() + geom_line() + xlim(0,15000) + stat_function(fun = function_weight_tests_modeled_simple_q0.005, col="red")
+#See if including more variables increase quality significantly
+########################################################################################################
+weight_tests_modeled_q0.005 <- lm(weight_klNA ~lineitemquantity+unitofmeasure+lineitemvalue, data=weight_tests_q0.005)   #Adj. R^2 = 0.7124 
+summary(weight_tests_modeled_q0.005)
+weight_tests_modeled_q0.005$coefficients
+#499.719501971+0.138671589*lineitemquantity-4.826180831*unitofmeasure+0.003500737*lineitemvalue
+########################################################################################################
+#We're satisfied with this Regression - Apply weight_tests_modeled_q0.005 for NAs 
+
+
+#Diagnostics
+plot(weight_tests_modeled_q0.005)
+#Residuals vs Fitted: Most of our residuals are close to 0 (as we can see on the red line). Looks relatively random.
+#Normal Q-Q: Residuals should be normally distributed around the diagonal line - this does not hold for all observations: we see the results of random fluctuations at the extreme ends (heavy tailed line). Q-Qplot shows the violation of normality.
+
+#Scale-Location: This plot shows if residuals are spread equally along the ranges of predictors. This is how you can check the assumption of equal variance (homoscedasticity). It’s good if you see a horizontal line with equally (randomly) spread points. Scale-location plot shows a correlation trend between fitted and squareroot of standardized residual, as our p-value is <0.05 we must reject the null hypothesis of homoscedasticity! 
+bptest(weight_tests_modeled_q0.005) # = 2.2e-16 < 0.05
+
+#Residuals vs Leverage: Helps us to find influential cases (i.e., subjects) if any. Not all outliers are influential in linear regression analysis. Even though data have extreme values, they might not be influential to determine a regression line. Patterns are not relevant. We watch out for outlying values at the upper right corner or at the lower right corner: cases can be influential against a regression line. We don't have cases outside the dashed lines (Cook’s distance: cases are outside the lines mean high Cook’s distance scores), thus no cases are influential to the regression results. That's good.
+
+
+ggplot(dataset_tests, mapping=aes(x=weight, y=lineitemquantity)) + geom_point() + geom_line()+ xlim(0,10000) +
+  geom_line(data=dataset_tests, aes(x=weight_regressionbasedonly, y=lineitemquantity, color="Regression Estimation on whole dataset"),alpha = 0.5, size=1) + 
+  geom_line(data=dataset_tests, aes(x=weight_smoothedmeanonly, y=lineitemquantity, color="Smoothed Estimation Excel"),alpha = 0.5, size=1)  + ggtitle("Comparison Linear Regression with Smoothed Mean for Weight of Tests") + theme(text = element_text(size=20))
+
+
+#weight estimated for whole data set only by weight_tests_modeled_q0.005
+ggplot(dataset_tests, mapping=aes(x=weight, y=lineitemquantity), main="weight of deliveries of tests") + geom_point() + xlim(0,15000) + geom_line() + geom_line(data=dataset_tests, aes(x=weight_regressionbasedonly, y=lineitemquantity, color="Regression Estimation on whole dataset"),alpha = 0.5, size=1) + ggtitle("Linear Regression for Weight of Tests") + theme(text = element_text(size=20))
+#weight ORIGINAL + estimated for whole data set only by weight_tests_modeled_q0.005
+ggplot(dataset_tests, mapping=aes(x=weight, y=lineitemquantity), main="weight of deliveries of tests") + geom_point() + xlim(0,15000) + geom_line() + geom_line(data=dataset_tests, aes(x=weight_regressionbased, y=lineitemquantity, color="Regression Estimation on whole dataset"),alpha = 0.5, size=1) + ggtitle("Original Data + Linear Regression for Weight of Tests") + theme(text = element_text(size=20))
+
+#weight estimated for whole data set only by smoothed mean (excel)
+ggplot(dataset_tests, mapping=aes(x=weight, y=lineitemquantity), main="weight of deliveries of tests") + geom_point() + xlim(0,15000) + geom_line() + geom_line(data=dataset_tests, aes(x=weight_smoothedmeanonly, y=lineitemquantity, color="Smoothed Estimation Excel"),alpha = 0.5, size=1)  + ggtitle("Smoothed Mean for Weight of Tests") + theme(text = element_text(size=20))
+#weight ORIGINAL + estimated for whole data set only by smoothed mean (excel)
+ggplot(dataset_tests, mapping=aes(x=weight, y=lineitemquantity), main="weight of deliveries of tests") + geom_point() + xlim(0,15000) + geom_line() + geom_line(data=dataset_tests, aes(x=weight_smoothedmean, y=lineitemquantity, color="Smoothed Estimation Excel"),alpha = 0.5, size=1)  + ggtitle("Original Data + Smoothed Mean for Weight of Tests") + theme(text = element_text(size=20))
+#We see that smoothed mean performs better for tests compared to the regression
+
+
+
+
+
+#WEIGHT DRUGS + TESTS MODELED
+#Linear Regression Estimation on whole dataset
+ggplot(dataset, mapping=aes(x=weight, y=lineitemquantity), main="weight of deliveries") + geom_point() + geom_line() + geom_line(data=dataset, aes(x=weight_regressionbasedonly, y=lineitemquantity, color="Linear Regression Estimation on whole dataset"),alpha = 0.8, size=1) + ggtitle("Linear Regression for Weight")+xlim(0,15000) + ggtitle("Linear Regression for Weight") + theme(text = element_text(size=20))
+#ORIGINAL + Linear Regression Estimation
+ggplot(dataset, mapping=aes(x=weight, y=lineitemquantity), main="weight of deliveries") + geom_point() + geom_line() + geom_line(data=dataset, aes(x=weight_regressionbased, y=lineitemquantity, color="Linear Regression Estimation on whole dataset"),alpha = 0.8, size=1) + ggtitle("Original Data + Linear Regression for Weight")+xlim(0,15000) + theme(text = element_text(size=20))
+
+#weight estimated for whole data set only by smoothed mean
+ggplot(dataset, mapping=aes(x=weight, y=lineitemquantity), main="weight of deliveries") + geom_point() + geom_line() + geom_line(data=dataset, aes(x=weight_smoothedmeanonly, y=lineitemquantity, color="Smoothed Mean on whole dataset"),alpha = 0.8, size=1) + ggtitle("Smoothed Mean for Weight")+xlim(0,15000) + ggtitle("Smoothed Mean for Weight") + theme(text = element_text(size=20))
+#ORIGINAL + weight estimated for whole data set only by smoothed mean
+ggplot(dataset, mapping=aes(x=weight, y=lineitemquantity), main="weight of deliveries") + geom_point() + geom_line() + geom_line(data=dataset, aes(x=weight_smoothedmean, y=lineitemquantity, color="Smoothed Mean on whole dataset"),alpha = 0.8, size=1) + ggtitle("Original Data + Smoothed Mean for Weight")+xlim(0,15000) + theme(text = element_text(size=20))
+```
+
+
+
+```{r}
+' -----------  Dealing with explicitely missing data: Vendor_INCO_Term & Shipment_Mode ----------- '
+
+#MICE Imputation
+
+#Selecting a few variables with no missing values to use in the imputation, in addition to the variables will be imputing
+New_Data = rbind(Train_Weight, Test_Weight)
+To_Impute = New_Data %>% select(Country, Vendor_INCO_Term, Shipment_Mode,Sub_Classification,
+                                Vendor, Brand, Unit_of_Measure__Per_Pack_,Line_Item_Quantity,
+                                Line_Item_Value, Total_value_of_Delivery, )
+#Imputing
+imputed_Data <- mice(To_Impute, m=5, maxit = 5, method = 'cart', seed = 500)
+
+#Choosing an imputed Dataset
+completeData <- complete(imputed_Data,3)
+
+#Creating a final dataset
+semiFinal_Data = New_Data
+semiFinal_Data$Vendor_INCO_Term = completeData$Vendor_INCO_Term
+semiFinal_Data$Shipment_Mode = completeData$Shipment_Mode
+summary(semiFinal_Data)
+sapply(semiFinal_Data, function(x) sum(is.na(x))) 
+
+
+
+#Code for the graphs, you can change the variable names and generate others
+#figure 25
+Compare <- data.frame(before_imputation = New_Data$Shipment_Mode, 
+                      after_imputation = completeData$Shipment_Mode)
+Compare$type = "0"
+p = nrow(Compare)
+seq3 = seq(1,p, by = 1)
+for (j in seq3){ if (is.na(Compare$before_imputation[j])==TRUE){
+  Compare$type[j] = "after"}
+  else {Compare$type[j] = "before"}}
+p1 <- ggplot(Compare , aes(after_imputation)) +
+      geom_bar(alpha=0.5, fill ="#BB4444")
+p2 <-ggplot(Compare%>% drop_na(before_imputation), aes(before_imputation)) +
+     geom_bar(alpha=0.5, fill ="#4477AA", na.rm = TRUE)
+grid.arrange( p1, p2, ncol = 2)
+
+#figure 26
+xyplot(imputed_Data,Shipment_Mode ~ Line_Item_Value , pch = 18, cex = 1)
+
+```
+
+```{r}
+semiFinal_Data
+semiFinal_Data$Estimated_Shipment_Mode <- NULL
+semiFinal_Data$Scheduled_Delivery_Date <-NULL
+semiFinal_Data$Delivery_Recorded_Date <- NULL
+semiFinal_Data$Estimated_Line_Item_Insurance__USD_ <-NULL
+semiFinal_Data$Vlookup_this_ID_for_freight_costs <- NULL
+semiFinal_Data$Vlookup_this_ID_for_weight<- NULL
+semiFinal_Data$Vlookup_for_weight<- NULL
+semiFinal_Data$Vlookup_for_freight_costs<- NULL
+semiFinal_Data$Freight_Cost__with_reference_of_IDxxx_<- NULL
+semiFinal_Data$Freight_Cost__with_reference_of_IDxxx__NA<- NULL
+semiFinal_Data$Weight__Kilograms_ <- NULL
+semiFinal_Data$Weight__with_reference_of_IDxxx_ <- NULL
+semiFinal_Data$Weight__with_reference_of_IDxxx__NA <- NULL
+semiFinal_Data$Weight_Estimated_due_to_mean_of_similar_demand__smoothed_ <- NULL  
+semiFinal_Data$`Weight_original_+_Regression__2245.156962+_0.109744*lineitemquantity_for_drugs__q0.001___&__499.719501971+0.138671589*lineitemquantity-4.826180831*unitofmeasure+0.003500737*lineitemvalue_` <- NULL
+semiFinal_Data$simplest_regression_applied_on_whole_data_set <- NULL
+mode(semiFinal_Data$Unit_Price)
+as.character(semiFinal_Data$Unit_Price)
+
+write.table(semiFinal_Data, file = "semiFinal_Data.csv", sep=";")
+view(semiFinal_Data)
+#Shift Column names to right side, delete first column (Write.table generated one column). Then transform it to an excel file (.xlsx)
+```
+
+
+
+
+
+
+```{r}
+' -----------  Dealing with Missing value of freight cost ----------- '
+
+# changing catogroical data
+
+# dataset$shipmentmode = factor(dataset$shipmentmode,
+#                        levels = c('Ocean', 'Air Charter', 'Air', 'Truck'),
+#                        labels = c(1, 2, 3, 4))
+# 
+# 
+# 
+# # data_orders$`Estimated Shipment Mode` = factor(data_orders$`Estimated Shipment Mode`,
+# #                        levels = c('Ocean', 'Air Charter', 'Air', 'Truck'),
+# #                        labels = c(1, 2, 3, 4))
+# 
+# shipment <- data_orders$`Estimated Shipment Mode`
+# 
+# dataset$vendorincoterm= factor(dataset$vendorincoterm,
+#                        levels = c('CIF', 'CIP', 'DAP', 'DDP','DDU', 'EXW', 'FCA'),
+#                        labels = c(1, 2, 3, 4,5,6,7))
+# 
+# 
+# 
+# 
+# dataset$subclassification = factor(dataset$subclassification,
+#                        levels = c('Adult', 'HIV test'),
+#                        labels = c(1, 2))
+
+
+
+# Removing Outliers
+
+#Removing outliers of Weight 
+data_summary <- summary(weight_final)
+# Estimate interquartile range
+# (3rd quartile minus 1st quartile)
+iqr <- data_summary[[5]] - data_summary[[2]]
+# Identify bounds for outliers
+lower_bound <- data_summary[[2]] - (1.5 * iqr)
+upper_bound <- data_summary[[5]] + (1.5 * iqr)
+# Identify outlier(s)
+outliers <- dataset %>% 
+  filter(weight_final < lower_bound)
+# Remove outliers from dataframe
+data2 <- dataset %>%
+  filter(weight_final < upper_bound & weight_final > lower_bound)
+
+#Removing outliers of Freight 
+data_summary <- summary(dataset$freightcostNA)
+iqr <- data_summary[[5]] - data_summary[[2]]
+lower_bound <- data_summary[[2]] - (1.5 * iqr)
+upper_bound <- data_summary[[5]] + (1.5 * iqr)
+data2 <- data2 %>%
+  filter(freightcostNA < upper_bound & freightcostNA > lower_bound)
+
+#Removing outliers of valueofdelivery
+data_summary <- summary(dataset$valueofdelivery)
+iqr <- data_summary[[5]] - data_summary[[2]]
+lower_bound <- data_summary[[2]] - (1.5 * iqr)
+upper_bound <- data_summary[[5]] + (1.5 * iqr)
+data2 <- data2 %>%
+  filter(valueofdelivery < upper_bound & valueofdelivery > lower_bound)
+
+#Removing outliers of line item Insurance  
+data_summary <- summary(dataset$lineiteminsurance)
+iqr <- data_summary[[5]] - data_summary[[2]]
+lower_bound <- data_summary[[2]] - (1.5 * iqr)
+upper_bound <- data_summary[[5]] + (1.5 * iqr)
+data2 <- data2 %>%
+  filter(lineiteminsurance < upper_bound &lineiteminsurance > lower_bound)
+
+#Removing outliers of Estimated_Minimal_Distance_Manufacturing_Country_to_Destination 
+data_summary <- summary(dataset$estimatedminimaldistance)
+iqr <- data_summary[[5]] - data_summary[[2]]
+lower_bound <- data_summary[[2]] - (1.5 * iqr)
+upper_bound <- data_summary[[5]] + (1.5 * iqr)
+data2 <- data2 %>%
+  filter(estimatedminimaldistance < upper_bound & estimatedminimaldistance > lower_bound)
+
+#Removing outliers of demanded units 
+data_summary <- summary(dataset$demand)
+iqr <- data_summary[[5]] - data_summary[[2]]
+lower_bound <- data_summary[[2]] - (1.5 * iqr)
+upper_bound <- data_summary[[5]] + (1.5 * iqr)
+data2 <- data2 %>%
+  filter(demand < upper_bound & demand > lower_bound)
+
+
+
+
+####Figure 28: 
+
+
+# Fitting Multiple Linear Regression to the Training set
+regression <- lm(freightcostNA ~  weight_final   + valueofdelivery + estimatedminimaldistance + demand  , data = data2)
+summary(regression) # Adjusted R-squared:  0.3238 
+Regression
+
+
+
+
+
+#......Regression Graph freightcostNA, weight_final
+ggplot(data2, aes(freightcostNA, weight_final)) +
+  geom_point() +
+  geom_smooth(method = "lm")
+
+#......Regression Graph freightcostNA, valueofdelivery
+ggplot(data2, aes(freightcostNA, valueofdelivery)) +
+  geom_point() +
+  geom_smooth(method = "lm")
+
+
+#......Regression Graph freightcostNA, estimatedminimaldistancel
+ggplot(data2, aes(freightcostNA, estimatedminimaldistance)) +
+  geom_point() +
+  geom_smooth(method = "lm")
+
+
+#......Regression Graph freightcostNA, demand
+ggplot(data2, aes(freightcostNA, demand)) +
+  geom_point() +
+  geom_smooth(method = "lm")
+
+
+
+
+#Missing Value Imputation 
+ind <- function(t){
+  x <- dim(length(t))
+  x[which(!is.na(t))] = 1
+  x[which(is.na(t))] = 0
+  return(x)
+}
+
+dataset$Freight_final = ind(dataset$freightcostNA)
+
+
+for(i in 1:nrow(dataset))
+{
+  if(dataset$Freight_final[i] == 0)
+   {dataset$freightcostNA[i] = 6250+1.382*weight-0.02747*valueofdelivery-0.2284*estimatedminimaldistance -0.002052*demand
+
+  }
+
+}
+
+
+
+
+
+
+
+
+
+
+
+
+```
+
+
+
+```{r}
+' -----------  Freight Costs Smoothed Mean  ----------- '
+
+#Investigate Distribution of significant variables
+SD(dataset_drugs$estimatedminimaldistance) #3958.679
+SD(dataset_drugs$demand) #2484045
+SD(dataset_drugs$weight_final) #10246.25
+SD(dataset_drugs$valueofdelivery) #420324
+plot(dataset_drugs$demand, dataset_drugs$valueofdelivery)
+plot(dataset_drugs$demand, dataset_drugs$weight_final)
+plot(dataset_drugs$demand, dataset_drugs$estimatedminimaldistance)
+plot(dataset_drugs$weight_final, dataset_drugs$estimatedminimaldistance)
+plot(dataset_drugs$weight_final, dataset_drugs$valueofdelivery)
+plot(dataset_drugs$estimatedminimaldistance, dataset_drugs$valueofdelivery)
+
+SD(dataset_tests$estimatedminimaldistance) #2795.84
+SD(dataset_tests$demand) #220431.9
+SD(dataset_tests$weight_final) #33363.25
+SD(dataset_tests$valueofdelivery) #184031.6
+```
+
+```{r}
+
+```
+

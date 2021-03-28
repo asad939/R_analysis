@@ -1,0 +1,741 @@
+
+```{r}
+---
+title: "CaseStudy_Pharma"
+submission-date: "15/08/2020"
+output: html_document
+---
+```
+
+
+******************************************************************************************************
+This R-File contains: 
+- Modelling of costeffective Transportation Concept
+******************************************************************************************************
+
+
+```{r}
+' -----------  Installing and loading the needed package  ----------- '
+
+install.packages("car")
+install.packages("corrplot")
+install.packages("dplyr")
+install.packages("forecast")
+install.packages("ggcorrplot")
+install.packages("ggplot2")
+install.packages("gridExtra")
+install.packages("mice")
+install.packages("plotly")
+install.packages("readxl")
+install.packages("sjmisc")
+install.packages("stringr")
+install.packages("tidyr")
+install.packages("tidyverse")
+```
+
+```{r}
+library(car)
+library(corrplot)
+library(dplyr)
+library(forecast)
+library(ggcorrplot)
+library(ggplot2)
+library(gridExtra)
+library(mice)
+library(plotly)
+library(readxl)
+library(sjmisc)
+library(stringr)
+library(tidyr)
+library(tidyverse)
+```
+
+
+```{r}
+' -----------  Loading the dataframe  ----------- '
+
+data_final <- read_excel("Data/Final_Data neu 14082020 latest version.xlsx")
+view(data_final)
+```
+
+
+
+```{r}
+' -----------  Code the variables  ----------- '
+
+id <- c(data_final$ID)
+country <- c(data_final$Country)
+vendorincoterm <- c(data_final$Vendor_INCO_Term)
+shipmentmode <- c(data_final$Shipment_Mode)
+deliveryrecordedyear <- c(data_final$Year_DRD)
+subclassification <- c(data_final$Sub_Classification)
+vendor <- c(data_final$Vendor)
+brand <- c(data_final$Brand)
+unitofmeasure <- c(data_final$Unit_of_Measure__Per_Pack_)
+lineitemquantity <- c(data_final$Line_Item_Quantity)
+lineitemvalue <- c(data_final$Line_Item_Value)
+packprice <- c(data_final$Pack_Price)
+unitprice <- c(data_final$Unit_Price)
+demand <- c(data_final$Demand_lotsize) 
+manufacturingcountry <- c(data_final$`Manufacturing Country` )
+estimatedminimaldistance <- c(data_final$Estimated_Minimal_Distance_Manufacturing_Country_to_Destination) # added manually in excel
+weight_final <- c(data_final$`Weight_original_+__by_mean_of_similiar`)
+freightcost_final <- c(data_final$Freightfinal)
+lineiteminsurance <- c(data_final$Line_Item_Insurance__USD_)
+transportationcost <- c(data_final$TransportationCosts)
+transportationcostperunit <- c(data_final$transpotationcostperunit) #spelling mistake in excel
+
+dataset_final <- data.frame(id, country, vendorincoterm, shipmentmode, deliveryrecordedyear, subclassification, vendor, brand, unitofmeasure, lineitemquantity, lineitemvalue, packprice, unitprice, demand, manufacturingcountry, estimatedminimaldistance, weight_final, freightcost_final, lineiteminsurance, transportationcost, transportationcostperunit)
+dataset_final #Shorten Dataset for better overview
+```
+
+
+
+
+```{r}
+#1. Split data set acc. to subclassification:
+dataset_final_drugs <- filter(dataset_final, dataset_final$subclassification=="Adult")
+dataset_final_tests <- filter(dataset_final, dataset_final$subclassification=="HIV test")
+
+#2. Split data set acc. to Countries receiving the order
+#2.1 Drugs
+Southafrica_Drugs <- filter(dataset_final_drugs, dataset_final_drugs$country =="South Africa")
+Nigeria_Drugs <- filter(dataset_final_drugs, dataset_final_drugs$country=="Nigeria")
+Cotedivoire_Drugs <- filter(dataset_final_drugs, dataset_final_drugs$country=="Côte d'Ivoire")
+Uganda_Drugs <- filter(dataset_final_drugs, dataset_final_drugs$country=="Uganda")
+Zambia_Drugs <- filter(dataset_final_drugs, dataset_final_drugs$country=="Zambia") #ZAID/REBECCA
+Mozambique_Drugs <- filter(dataset_final_drugs, dataset_final_drugs$country=="Mozambique") #ZAID/ASAD
+Zimbabwe_Drugs <- filter(dataset_final_drugs, dataset_final_drugs$country=="Zimbabwe") #ASAD
+Tanzania_Drugs <- filter(dataset_final_drugs, dataset_final_drugs$country=="Tanzania") #ASAD
+
+#2.2 Tests
+Southafrica_Tests <- filter(dataset_final_tests, dataset_final_tests$country =="South Africa")
+Nigeria_Tests <- filter(dataset_final_tests, dataset_final_tests$country=="Nigeria")
+Cotedivoire_Tests <- filter(dataset_final_tests, dataset_final_tests$country=="Côte d'Ivoire")
+Uganda_Tests <- filter(dataset_final_tests, dataset_final_tests$country=="Uganda")
+Zambia_Tests <- filter(dataset_final_tests, dataset_final_tests$country=="Zambia")
+Mozambique_Tests <- filter(dataset_final_tests, dataset_final_tests$country=="Mozambique") 
+Zimbabwe_Tests <- filter(dataset_final_tests, dataset_final_tests$country=="Zimbabwe")
+Tanzania_Tests <- filter(dataset_final_tests, dataset_final_tests$country=="Tanzania")
+```
+
+
+```{r}
+#3. Plot for drugs and tests separate, for every country plot (y:transportationcostperunit, x:shipmentmode), then for best shipment modes investigate demand(=lotsize), manufacturingcountry, supplier
+
+#South Africa
+#3.1 Drugs
+Southafrica_Drugs_Air <- filter(Southafrica_Drugs, Southafrica_Drugs$shipmentmode =="Air") #232
+Southafrica_Drugs_AirCharter <- filter(Southafrica_Drugs, Southafrica_Drugs$shipmentmode =="Air Charter") # 1
+Southafrica_Drugs_Ocean <- filter(Southafrica_Drugs, Southafrica_Drugs$shipmentmode =="Ocean") # 229
+Southafrica_Drugs_Truck <- filter(Southafrica_Drugs, Southafrica_Drugs$shipmentmode =="Truck") #944
+ggplot(Southafrica_Drugs, aes(x=shipmentmode, y=transportationcostperunit)) + geom_boxplot() + ylim(0,10)+ theme(axis.text.x = element_text(size = 12))
+
+
+
+#Vendor
+ggplot(Southafrica_Drugs_Air, aes(x=vendor, y=transportationcostperunit)) + geom_boxplot() + ylim(0,2)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Southafrica Drug Deliveries by Air")
+ggplot(Southafrica_Drugs_AirCharter, aes(x=vendor, y=transportationcostperunit)) + geom_boxplot() + ylim(0,2)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Southafrica Drug Deliveries by AirCharter")
+ggplot(Southafrica_Drugs_Ocean, aes(x=vendor, y=transportationcostperunit)) + geom_boxplot() + ylim(0,2)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Southafrica Drug Deliveries by Ocean")
+ggplot(Southafrica_Drugs_Truck, aes(x=vendor, y=transportationcostperunit)) + geom_boxplot() + ylim(0,2) + theme(axis.text.x = element_text(size = 12)) + ggtitle("Southafrica Drug Deliveries by Truck")
+
+#Lot size (boxplot doesn't visualize good)
+ggplot(Southafrica_Drugs_Air, aes(x=demand, y=transportationcostperunit)) + geom_boxplot() + ylim(0,1)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Southafrica Drug Deliveries by Air")
+ggplot(Southafrica_Drugs_AirCharter, aes(x=demand, y=transportationcostperunit)) + geom_boxplot() + ylim(0,1)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Southafrica Drug Deliveries by AirCharter")
+ggplot(Southafrica_Drugs_Ocean, aes(x=demand, y=transportationcostperunit)) + geom_boxplot() + ylim(0,1)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Southafrica Drug Deliveries by Ocean")
+ggplot(Southafrica_Drugs_Truck, aes(x=demand, y=transportationcostperunit)) + geom_boxplot() + ylim(0,1) + theme(axis.text.x = element_text(size = 12)) + ggtitle("Southafrica Drug Deliveries by Truck")
+# better plot
+ggplot(Southafrica_Drugs_Air, aes(x=demand, y=transportationcostperunit)) + geom_point() + geom_line() + ylim(0,1)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Southafrica Drug Deliveries by Air")
+ggplot(Southafrica_Drugs_AirCharter, aes(x=demand, y=transportationcostperunit)) + geom_point() + geom_line()  + ylim(0,1)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Southafrica Drug Deliveries by AirCharter")
+ggplot(Southafrica_Drugs_Ocean, aes(x=demand, y=transportationcostperunit))  + geom_point() + geom_line()  + ylim(0,1)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Southafrica Drug Deliveries by Ocean")
+ggplot(Southafrica_Drugs_Truck, aes(x=demand, y=transportationcostperunit))  + geom_point() + geom_line()  + ylim(0,1) + theme(axis.text.x = element_text(size = 12)) + ggtitle("Southafrica Drug Deliveries by Truck")
+# as recommended #USE AIR OR OCEAN
+ggplot(Southafrica_Drugs_Air, aes(x=demand, y=transportationcostperunit)) + geom_point() + geom_line() + ylim(0,1)+ xlim(0,2000000)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Southafrica Drug Deliveries by Air")
+ggplot(Southafrica_Drugs_Ocean, aes(x=demand, y=transportationcostperunit))  + geom_point() + geom_line()  + ylim(0,1)+ xlim(0,2000000) + ggtitle("Southafrica Drug Deliveries by Ocean")
+
+
+#i wanted to see at which point of demand the mean cost per  unit are small, zooming/adjust x-axis does not work
+#ggplot(Southafrica_Drugs_Ocean, aes(x=demand, y=transportationcostperunit))  + geom_point() + geom_line()  + ylim(0,1) + xlim(0,1000)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Southafrica Drug Deliveries by Ocean") + scale_y_continuous(limits=c(0,1000), breaks=seq(0,1000, by = 10))
+
+#Manufacturing Country
+ggplot(Southafrica_Drugs_Air, aes(x=manufacturingcountry, y=transportationcostperunit)) + geom_boxplot() + ylim(0,1)+  ggtitle("Southafrica Drug Deliveries by Air")
+ggplot(Southafrica_Drugs_AirCharter, aes(x=manufacturingcountry, y=transportationcostperunit)) + geom_boxplot() + ylim(0,1)+  ggtitle("Southafrica Drug Deliveries by AirCharter")
+ggplot(Southafrica_Drugs_Ocean, aes(x=manufacturingcountry, y=transportationcostperunit))  + geom_boxplot() + ylim(0,1)+ ggtitle("Southafrica Drug Deliveries by Ocean")
+ggplot(Southafrica_Drugs_Truck, aes(x=manufacturingcountry, y=transportationcostperunit)) + geom_boxplot() + ylim(0,1) +  ggtitle("Southafrica Drug Deliveries by Truck")
+
+
+Southafrica_Tests #South Africa did not order Tests, so skip for tests
+
+```
+
+
+
+```{r}
+#Nigeria DRUGS
+ggplot(Nigeria_Drugs, aes(x=shipmentmode, y=transportationcostperunit)) + geom_boxplot() + ylim(0,1)+ theme(axis.text.x = element_text(size = 12))
+#3.1 Drugs
+Nigeria_Drugs_Air <- filter(Nigeria_Drugs, Nigeria_Drugs$shipmentmode =="Air") # 349
+Nigeria_Drugs_AirCharter <- filter(Nigeria_Drugs, Nigeria_Drugs$shipmentmode =="Air Charter") # 608
+Nigeria_Drugs_Ocean <- filter(Nigeria_Drugs, Nigeria_Drugs$shipmentmode =="Ocean") #2
+Nigeria_Drugs_Truck <- filter(Nigeria_Drugs, Nigeria_Drugs$shipmentmode =="Truck") #12
+
+#Vendor
+ggplot(Nigeria_Drugs_Air, aes(x=vendor, y=transportationcostperunit)) + geom_boxplot() + ylim(0,2)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Nigeria Drug Deliveries by Air") + theme(axis.text.x = element_text(size = 6, angle = 3))
+ggplot(Nigeria_Drugs_AirCharter, aes(x=vendor, y=transportationcostperunit)) + geom_boxplot() + ylim(0,2)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Nigeria Drug Deliveries by AirCharter")
+ggplot(Nigeria_Drugs_Ocean, aes(x=vendor, y=transportationcostperunit)) + geom_boxplot() + ylim(0,2)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Nigeria Drug Deliveries by Ocean")
+ggplot(Nigeria_Drugs_Truck, aes(x=vendor, y=transportationcostperunit)) + geom_boxplot() + ylim(0,2) + theme(axis.text.x = element_text(size = 12)) + ggtitle("Nigeria Drug Deliveries by Truck")
+
+#Lot size (boxplot doesn't visualize good)
+ggplot(Nigeria_Drugs_Air, aes(x=demand, y=transportationcostperunit)) + geom_boxplot() + ylim(0,1)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Nigeria Drug Deliveries by Air")
+ggplot(Nigeria_Drugs_AirCharter, aes(x=demand, y=transportationcostperunit)) + geom_boxplot() + ylim(0,1)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Nigeria Drug Deliveries by AirCharter")
+ggplot(Nigeria_Drugs_Ocean, aes(x=demand, y=transportationcostperunit)) + geom_boxplot() + ylim(0,1)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Nigeria Drug Deliveries by Ocean")
+ggplot(Nigeria_Drugs_Truck, aes(x=demand, y=transportationcostperunit)) + geom_boxplot() + ylim(0,1) + theme(axis.text.x = element_text(size = 12)) + ggtitle("Nigeria Drug Deliveries by Truck")
+# better plot
+ggplot(Nigeria_Drugs_Air, aes(x=demand, y=transportationcostperunit)) + geom_point() + geom_line() + ylim(0,1)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Nigeria Drug Deliveries by Air")
+ggplot(Nigeria_Drugs_AirCharter, aes(x=demand, y=transportationcostperunit)) + geom_point() + geom_line()  + ylim(0,1)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Nigeria Drug Deliveries by AirCharter")
+ggplot(Nigeria_Drugs_Ocean, aes(x=demand, y=transportationcostperunit))  + geom_point() + geom_line()  + ylim(0,1)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Nigeria Drug Deliveries by Ocean")
+ggplot(Nigeria_Drugs_Truck, aes(x=demand, y=transportationcostperunit))  + geom_point() + geom_line()  + ylim(0,1) + theme(axis.text.x = element_text(size = 12)) + ggtitle("Nigeria Drug Deliveries by Truck")
+
+# as recommended #USE AIR OR OCEAN
+ggplot(Nigeria_Drugs_AirCharter, aes(x=demand, y=transportationcostperunit)) + geom_point() + geom_line() + ylim(0,1)+ xlim(0,5000000)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Nigeria Drug Deliveries by AirCharter")
+ggplot(Nigeria_Drugs_Air, aes(x=demand, y=transportationcostperunit)) + geom_point() + geom_line() + ylim(0,1)+ xlim(0,2500000)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Nigeria Drug Deliveries by Air")
+
+#Manufacturing Country
+ggplot(Nigeria_Drugs_Air, aes(x=manufacturingcountry, y=transportationcostperunit)) + geom_boxplot() + ylim(0,1)+  ggtitle("Nigeria Drug Deliveries by Air")
+ggplot(Nigeria_Drugs_AirCharter, aes(x=manufacturingcountry, y=transportationcostperunit)) + geom_boxplot() + ylim(0,1)+  ggtitle("Nigeria Drug Deliveries by AirCharter")
+ggplot(Nigeria_Drugs_Ocean, aes(x=manufacturingcountry, y=transportationcostperunit))  + geom_boxplot() + ylim(0,1)+ ggtitle("Nigeria Drug Deliveries by Ocean")
+ggplot(Nigeria_Drugs_Truck, aes(x=manufacturingcountry, y=transportationcostperunit)) + geom_boxplot() + ylim(0,1) +  ggtitle("Nigeria Drug Deliveries by Truck")
+
+
+
+
+
+#Nigeria TESTS (REBECCA)
+ggplot(Nigeria_Tests, aes(x=shipmentmode, y=transportationcostperunit)) + geom_boxplot() + ylim(0,10)+ theme(axis.text.x = element_text(size = 12)) 
+#3.2 Tests
+Nigeria_Tests_Air <- filter(Nigeria_Tests, Nigeria_Tests$shipmentmode =="Air") # 203
+Nigeria_Tests_AirCharter <- filter(Nigeria_Tests, Nigeria_Tests$shipmentmode =="Air Charter") # 0
+Nigeria_Tests_Ocean <- filter(Nigeria_Tests, Nigeria_Tests$shipmentmode =="Ocean") # 0
+Nigeria_Tests_Truck <- filter(Nigeria_Tests, Nigeria_Tests$shipmentmode =="Truck") # 3
+
+#Vendor
+ggplot(Nigeria_Tests_Air, aes(x=vendor, y=transportationcostperunit)) + geom_boxplot() + ylim(0,2)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Nigeria Test Deliveries by Air")+ theme(axis.text.x = element_text(size = 6))
+ggplot(Nigeria_Tests_AirCharter, aes(x=vendor, y=transportationcostperunit)) + geom_boxplot() + ylim(0,2)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Nigeria Test Deliveries by AirCharter")
+ggplot(Nigeria_Tests_Ocean, aes(x=vendor, y=transportationcostperunit)) + geom_boxplot() + ylim(0,2)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Nigeria Test Deliveries by Ocean")
+ggplot(Nigeria_Tests_Truck, aes(x=vendor, y=transportationcostperunit)) + geom_boxplot() + ylim(0,2) + theme(axis.text.x = element_text(size = 12)) + ggtitle("Nigeria Test Deliveries by Truck")
+
+#Lot size (boxplot doesn visualize good)
+ggplot(Nigeria_Tests_Air, aes(x=demand, y=transportationcostperunit)) + geom_boxplot() + ylim(0,1)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Nigeria Test Deliveries by Air")
+ggplot(Nigeria_Tests_Truck, aes(x=demand, y=transportationcostperunit)) + geom_boxplot() + ylim(0,1) + theme(axis.text.x = element_text(size = 12)) + ggtitle("Nigeria Test Deliveries by Truck")
+# better plot
+ggplot(Nigeria_Tests_Air, aes(x=demand, y=transportationcostperunit)) + geom_point() + geom_line() + ylim(0,1)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Nigeria Test Deliveries by Air")
+ggplot(Nigeria_Tests_Truck, aes(x=demand, y=transportationcostperunit))  + geom_point() + geom_line()  + ylim(0,1) + theme(axis.text.x = element_text(size = 12)) + ggtitle("Nigeria Test Deliveries by Truck")
+
+#Manufacturing Country
+ggplot(Nigeria_Tests_Air, aes(x=manufacturingcountry, y=transportationcostperunit)) + geom_boxplot() + ylim(0,1)+  ggtitle("Nigeria Test Deliveries by Air")
+ggplot(Nigeria_Tests_Truck, aes(x=manufacturingcountry, y=transportationcostperunit)) + geom_boxplot() + ylim(0,1) +  ggtitle("Nigeria Test Deliveries by Truck")
+```
+
+
+
+
+
+
+```{r}
+Cotedivoire_Drugs 
+
+ggplot(Cotedivoire_Drugs, aes(x=shipmentmode, y=transportationcostperunit)) + geom_boxplot() + ylim(0,2)+ theme(axis.text.x = element_text(size = 12))  
+#3.1 Drugs
+Cotedivoire_Drugs_Air <- filter(Cotedivoire_Drugs, Cotedivoire_Drugs$shipmentmode =="Air") # 585
+Cotedivoire_Drugs_AirCharter <- filter(Cotedivoire_Drugs, Cotedivoire_Drugs$shipmentmode =="Air Charter") # 11
+Cotedivoire_Drugs_Ocean <- filter(Cotedivoire_Drugs, Cotedivoire_Drugs$shipmentmode =="Ocean") # 6 
+Cotedivoire_Drugs_Truck <- filter(Cotedivoire_Drugs, Cotedivoire_Drugs$shipmentmode =="Truck") # 321
+
+
+#Vendor
+ggplot(Cotedivoire_Drugs_Air, aes(x=vendor, y=transportationcostperunit)) + geom_boxplot() + ylim(0,2)+ theme(axis.text.x = element_text(size = 8, angle = 80)) + ggtitle("Cotedivoire Drug Deliveries by Air")
+ggplot(Cotedivoire_Drugs_Air, aes(x=vendor, y=transportationcostperunit)) + geom_boxplot() + ylim(0,2)+ theme(axis.text.x = element_text(size = 8)) + ggtitle("Cotedivoire Drug Deliveries by Air")
+ggplot(Cotedivoire_Drugs_AirCharter, aes(x=vendor, y=transportationcostperunit)) + geom_boxplot() + ylim(0,2)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Cotedivoire Drug Deliveries by AirCharter")
+ggplot(Cotedivoire_Drugs_Ocean, aes(x=vendor, y=transportationcostperunit)) + geom_boxplot() + ylim(0,2)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Cotedivoire Drug Deliveries by Ocean")
+ggplot(Cotedivoire_Drugs_Truck, aes(x=vendor, y=transportationcostperunit)) + geom_boxplot() + ylim(0,2) + theme(axis.text.x = element_text(size = 12)) + ggtitle("Cotedivoire Drug Deliveries by Truck")
+
+#Lot size 
+ggplot(Cotedivoire_Drugs_Air, aes(x=demand, y=transportationcostperunit)) + geom_point() + geom_line() + ylim(0,1)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Cotedivoire Drug Deliveries by Air")+xlim(0,2000000)
+ggplot(Cotedivoire_Drugs_AirCharter, aes(x=demand, y=transportationcostperunit)) + geom_point() + geom_line()  + ylim(0,1)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Cotedivoire Drug Deliveries by AirCharter")
+ggplot(Cotedivoire_Drugs_Ocean, aes(x=demand, y=transportationcostperunit))  + geom_point() + geom_line()  + ylim(0,1)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Cotedivoire Drug Deliveries by Ocean")
+ggplot(Cotedivoire_Drugs_Truck, aes(x=demand, y=transportationcostperunit))  + geom_point() + geom_line()  + ylim(0,1) + theme(axis.text.x = element_text(size = 12)) + ggtitle("Cotedivoire Drug Deliveries by Truck") +xlim(0,2500000)
+
+#Manufacturing Country
+ggplot(Cotedivoire_Drugs_Air, aes(x=manufacturingcountry, y=transportationcostperunit)) + geom_boxplot() + ylim(0,1)+  ggtitle("Cotedivoire Drug Deliveries by Air")
+ggplot(Cotedivoire_Drugs_AirCharter, aes(x=manufacturingcountry, y=transportationcostperunit)) + geom_boxplot() + ylim(0,1)+  ggtitle("Cotedivoire Drug Deliveries by AirCharter")
+ggplot(Cotedivoire_Drugs_Ocean, aes(x=manufacturingcountry, y=transportationcostperunit))  + geom_boxplot() + ylim(0,1)+ ggtitle("Cotedivoire Drug Deliveries by Ocean")
+ggplot(Cotedivoire_Drugs_Truck, aes(x=manufacturingcountry, y=transportationcostperunit)) + geom_boxplot() + ylim(0,1) +  ggtitle("Cotedivoire Drug Deliveries by Truck")
+
+
+
+
+#Cotedivoire TESTS
+ggplot(Cotedivoire_Tests, aes(x=shipmentmode, y=transportationcostperunit)) + geom_boxplot() + ylim(0,7)+ theme(axis.text.x = element_text(size = 12)) #USE 
+#3.1 Tests
+Cotedivoire_Tests_Air <- filter(Cotedivoire_Tests, Cotedivoire_Tests$shipmentmode =="Air") # 152
+Cotedivoire_Tests_AirCharter <- filter(Cotedivoire_Tests, Cotedivoire_Tests$shipmentmode =="Air Charter") # 1
+Cotedivoire_Tests_Ocean <- filter(Cotedivoire_Tests, Cotedivoire_Tests$shipmentmode =="Ocean") # 0 
+Cotedivoire_Tests_Truck <- filter(Cotedivoire_Tests, Cotedivoire_Tests$shipmentmode =="Truck") # 1
+
+#Vendor
+ggplot(Cotedivoire_Tests_Air, aes(x=vendor, y=transportationcostperunit)) + geom_boxplot() + ylim(0,2)+ theme(axis.text.x = element_text(size = 8)) + ggtitle("Cotedivoire Test Deliveries by Air")
+ggplot(Cotedivoire_Tests_AirCharter, aes(x=vendor, y=transportationcostperunit)) + geom_boxplot() + ylim(0,2)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Cotedivoire Test Deliveries by AirCharter")
+ggplot(Cotedivoire_Tests_Truck, aes(x=vendor, y=transportationcostperunit)) + geom_boxplot() + ylim(0,2) + theme(axis.text.x = element_text(size = 12)) + ggtitle("Cotedivoire Test Deliveries by Truck")
+
+#Lot size
+ggplot(Cotedivoire_Tests_Air, aes(x=demand, y=transportationcostperunit)) + geom_point() + geom_line() + ylim(0,1)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Cotedivoire Test Deliveries by Air") + xlim(0,200000)
+
+
+#Manufacturing Country
+ggplot(Cotedivoire_Tests_Air, aes(x=manufacturingcountry, y=transportationcostperunit)) + geom_boxplot() + ylim(0,1)+  ggtitle("Cotedivoire Test Deliveries by Air")
+
+
+Cotedivoire_Tests_Air
+Cotedivoire_Tests_AirCharter
+Cotedivoire_Tests_Ocean
+Cotedivoire_Tests_Truck
+
+```
+
+
+
+
+
+```{r}
+#Uganda_Drugs - 738
+Uganda_Drugs
+ggplot(Uganda_Drugs, aes(x=shipmentmode, y=transportationcostperunit)) + geom_boxplot() + ylim(0,2)+ theme(axis.text.x = element_text(size = 12))
+#3.1 Drugs
+Uganda_Drugs_Air <- filter(Uganda_Drugs, Uganda_Drugs$shipmentmode =="Air") # 496
+Uganda_Drugs_AirCharter <- filter(Uganda_Drugs, Uganda_Drugs$shipmentmode =="Air Charter") # 0
+Uganda_Drugs_Ocean <- filter(Uganda_Drugs, Uganda_Drugs$shipmentmode =="Ocean") # 8
+Uganda_Drugs_Truck <- filter(Uganda_Drugs, Uganda_Drugs$shipmentmode =="Truck") # 234
+
+#Vendor
+ggplot(Uganda_Drugs_Air, aes(x=vendor, y=transportationcostperunit)) + geom_boxplot() + ylim(0,1)+ theme(axis.text.x = element_text(size = 8)) + ggtitle("Uganda Drug Deliveries by Air")
+ggplot(Uganda_Drugs_Ocean, aes(x=vendor, y=transportationcostperunit)) + geom_boxplot() + ylim(0,1)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Uganda Drug Deliveries by Ocean")
+ggplot(Uganda_Drugs_Truck, aes(x=vendor, y=transportationcostperunit)) + geom_boxplot() + ylim(0,1) + theme(axis.text.x = element_text(size = 12)) + ggtitle("Uganda Drug Deliveries by Truck")
+
+#Lot size
+ggplot(Uganda_Drugs_Air, aes(x=demand, y=transportationcostperunit)) + geom_point() + geom_line() + ylim(0,1)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Uganda Drug Deliveries by Air") + xlim(0,2000000)
+ggplot(Uganda_Drugs_Ocean, aes(x=demand, y=transportationcostperunit))  + geom_point() + geom_line()  + ylim(0,1)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Uganda Drug Deliveries by Ocean")
+ggplot(Uganda_Drugs_Truck, aes(x=demand, y=transportationcostperunit))  + geom_point() + geom_line()  + ylim(0,1) + theme(axis.text.x = element_text(size = 12)) + ggtitle("Uganda Drug Deliveries by Truck") + xlim(0,5000000)
+
+#Manufacturing Country
+ggplot(Uganda_Drugs_Air, aes(x=manufacturingcountry, y=transportationcostperunit)) + geom_boxplot() + ylim(0,1)+  ggtitle("Uganda Drug Deliveries by Air")
+ggplot(Uganda_Drugs_Ocean, aes(x=manufacturingcountry, y=transportationcostperunit))  + geom_boxplot() + ylim(0,1)+ ggtitle("Uganda Drug Deliveries by Ocean")
+ggplot(Uganda_Drugs_Truck, aes(x=manufacturingcountry, y=transportationcostperunit)) + geom_boxplot() + ylim(0,1) +  ggtitle("Uganda Drug Deliveries by Truck")
+
+
+
+
+#Uganda TESTS
+ggplot(Uganda_Tests, aes(x=shipmentmode, y=transportationcostperunit)) + geom_boxplot() + ylim(0,10)+ theme(axis.text.x = element_text(size = 12)) #USE
+#3.1 Tests
+Uganda_Tests_Air <- filter(Uganda_Tests, Uganda_Tests$shipmentmode =="Air") #  41
+Uganda_Tests_AirCharter <- filter(Uganda_Tests, Uganda_Tests$shipmentmode =="Air Charter") #  0
+Uganda_Tests_Ocean <- filter(Uganda_Tests, Uganda_Tests$shipmentmode =="Ocean") #  0
+Uganda_Tests_Truck <- filter(Uganda_Tests, Uganda_Tests$shipmentmode =="Truck") #  0
+
+
+#Vendor
+ggplot(Uganda_Tests_Air, aes(x=vendor, y=transportationcostperunit)) + geom_boxplot() + ylim(0,2)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Uganda Test Deliveries by Air")
+
+
+#Lot size
+ggplot(Uganda_Tests_Air, aes(x=demand, y=transportationcostperunit)) + geom_point() + geom_line() + ylim(0,1)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Uganda Test Deliveries by Air")
+ggplot(Uganda_Tests_Air, aes(x=demand, y=transportationcostperunit)) + geom_point() + geom_line() + ylim(0,1)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Uganda Test Deliveries by Air")+ xlim(0,400000)
+
+
+#Manufacturing Country
+ggplot(Uganda_Tests_Air, aes(x=manufacturingcountry, y=transportationcostperunit)) + geom_boxplot() + ylim(0,1)+  ggtitle("Uganda Test Deliveries by Air")
+```
+
+
+
+```{r}
+#Zambia
+Zambia_Drugs_Air <- filter(Zambia_Drugs, Zambia_Drugs$shipmentmode =="Air") # 126
+Zambia_Drugs_AirCharter <- filter(Zambia_Drugs, Zambia_Drugs$shipmentmode =="Air Charter") # 10
+Zambia_Drugs_Ocean <- filter(Zambia_Drugs, Zambia_Drugs$shipmentmode =="Ocean") # 6 
+Zambia_Drugs_Truck <- filter(Zambia_Drugs, Zambia_Drugs$shipmentmode =="Truck") # 430
+Zambia_Tests_Air <- filter(Zambia_Tests, Zambia_Tests$shipmentmode =="Air") # 110
+Zambia_Tests_AirCharter <- filter(Zambia_Tests, Zambia_Tests$shipmentmode =="Air Charter") # 0
+Zambia_Tests_Ocean <- filter(Zambia_Tests, Zambia_Tests$shipmentmode =="Ocean") # 0
+Zambia_Tests_Truck <- filter(Zambia_Tests, Zambia_Tests$shipmentmode =="Truck") # 1
+
+
+#Mozambique
+Mozambique_Drugs_Air <- filter(Mozambique_Drugs, Mozambique_Drugs$shipmentmode =="Air") # 207
+Mozambique_Drugs_AirCharter <- filter(Mozambique_Drugs, Mozambique_Drugs$shipmentmode =="Air Charter") # 0
+Mozambique_Drugs_Ocean <- filter(Mozambique_Drugs, Mozambique_Drugs$shipmentmode =="Ocean") # 0
+Mozambique_Drugs_Truck <- filter(Mozambique_Drugs, Mozambique_Drugs$shipmentmode =="Truck") # 337
+Mozambique_Tests_Air <- filter(Mozambique_Tests, Mozambique_Tests$shipmentmode =="Air") # 83
+Mozambique_Tests_AirCharter <- filter(Mozambique_Tests, Mozambique_Tests$shipmentmode =="Air Charter") # 0
+Mozambique_Tests_Ocean <- filter(Mozambique_Tests, Mozambique_Tests$shipmentmode =="Ocean") # 21
+Mozambique_Tests_Truck <- filter(Mozambique_Tests, Mozambique_Tests$shipmentmode =="Truck") # 0
+
+
+#Zimbabwe
+Zimbabwe_Drugs_Air <- filter(Zimbabwe_Drugs, Zimbabwe_Drugs$shipmentmode =="Air") # 106
+Zimbabwe_Drugs_AirCharter <- filter(Zimbabwe_Drugs, Zimbabwe_Drugs$shipmentmode =="Air Charter") # 18
+Zimbabwe_Drugs_Ocean <- filter(Zimbabwe_Drugs, Zimbabwe_Drugs$shipmentmode =="Ocean") # 3
+Zimbabwe_Drugs_Truck <- filter(Zimbabwe_Drugs, Zimbabwe_Drugs$shipmentmode =="Truck") # 360
+Zimbabwe_Tests_Air <- filter(Zimbabwe_Tests, Zimbabwe_Tests$shipmentmode =="Air") # 44
+Zimbabwe_Tests_AirCharter <- filter(Zimbabwe_Tests, Zimbabwe_Tests$shipmentmode =="Air Charter") # 0
+Zimbabwe_Tests_Ocean <- filter(Zimbabwe_Tests, Zimbabwe_Tests$shipmentmode =="Ocean") # 0
+Zimbabwe_Tests_Truck <- filter(Zimbabwe_Tests, Zimbabwe_Tests$shipmentmode =="Truck") # 7
+
+
+#Tanzania
+Tanzania_Drugs_Air <- filter(Tanzania_Drugs, Tanzania_Drugs$shipmentmode =="Air") # 197
+Tanzania_Drugs_AirCharter <- filter(Tanzania_Drugs, Tanzania_Drugs$shipmentmode =="Air Charter") # 1
+Tanzania_Drugs_Ocean <- filter(Tanzania_Drugs, Tanzania_Drugs$shipmentmode =="Ocean") # 6
+Tanzania_Drugs_Truck <- filter(Tanzania_Drugs, Tanzania_Drugs$shipmentmode =="Truck") # 193
+Tanzania_Tests_Air <- filter(Tanzania_Tests, Tanzania_Tests$shipmentmode =="Air") # 120
+Tanzania_Tests_AirCharter <- filter(Tanzania_Tests, Tanzania_Tests$shipmentmode =="Air Charter") #0
+Tanzania_Tests_Ocean <- filter(Tanzania_Tests, Tanzania_Tests$shipmentmode =="Ocean") # 0
+Tanzania_Tests_Truck <- filter(Tanzania_Tests, Tanzania_Tests$shipmentmode =="Truck") # 2
+
+```
+
+
+```{r}
+#Zambia DRUGS
+Zambia_Drugs_Air <- filter(Zambia_Drugs, Zambia_Drugs$shipmentmode =="Air") # 126
+Zambia_Drugs_AirCharter <- filter(Zambia_Drugs, Zambia_Drugs$shipmentmode =="Air Charter") # 10
+Zambia_Drugs_Ocean <- filter(Zambia_Drugs, Zambia_Drugs$shipmentmode =="Ocean") # 6 
+Zambia_Drugs_Truck <- filter(Zambia_Drugs, Zambia_Drugs$shipmentmode =="Truck") # 430
+Zambia_Tests_Air <- filter(Zambia_Tests, Zambia_Tests$shipmentmode =="Air") # 110
+Zambia_Tests_AirCharter <- filter(Zambia_Tests, Zambia_Tests$shipmentmode =="Air Charter") # 0
+Zambia_Tests_Ocean <- filter(Zambia_Tests, Zambia_Tests$shipmentmode =="Ocean") # 0
+Zambia_Tests_Truck <- filter(Zambia_Tests, Zambia_Tests$shipmentmode =="Truck") # 1
+```
+
+
+```{r}
+#Zambia drugs
+ggplot(Zambia_Drugs, aes(x=shipmentmode, y=transportationcostperunit)) + geom_boxplot() + ylim(0,10)+ theme(axis.text.x = element_text(size = 12)) #USE AIR OR OCEAN
+#Vendor
+ggplot(Zambia_Drugs_Air, aes(x=vendor, y=transportationcostperunit)) + geom_boxplot() + ylim(0,2)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Zambia Drug Deliveries by Air")
+ggplot(Zambia_Drugs_AirCharter, aes(x=vendor, y=transportationcostperunit)) + geom_boxplot() + ylim(0,2)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Zambia Drug Deliveries by AirCharter")
+ggplot(Zambia_Drugs_Ocean, aes(x=vendor, y=transportationcostperunit)) + geom_boxplot() + ylim(0,2)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Zambia Drug Deliveries by Ocean")
+ggplot(Zambia_Drugs_Truck, aes(x=vendor, y=transportationcostperunit)) + geom_boxplot() + ylim(0,2) + theme(axis.text.x = element_text(size = 12)) + ggtitle("Zambia Drug Deliveries by Truck")
+
+#Lot size (boxplot doesn visualize good)
+ggplot(Zambia_Drugs_Air, aes(x=demand, y=transportationcostperunit)) + geom_boxplot() + ylim(0,1)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Zambia Drug Deliveries by Air")
+ggplot(Zambia_Drugs_AirCharter, aes(x=demand, y=transportationcostperunit)) + geom_boxplot() + ylim(0,1)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Zambia Drug Deliveries by AirCharter")
+ggplot(Zambia_Drugs_Ocean, aes(x=demand, y=transportationcostperunit)) + geom_boxplot() + ylim(0,1)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Zambia Drug Deliveries by Ocean")
+ggplot(Zambia_Drugs_Truck, aes(x=demand, y=transportationcostperunit)) + geom_boxplot() + ylim(0,1) + theme(axis.text.x = element_text(size = 12)) + ggtitle("Zambia Drug Deliveries by Truck")
+# better plot
+ggplot(Zambia_Drugs_Air, aes(x=demand, y=transportationcostperunit)) + geom_point() + geom_line() + ylim(0,1)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Zambia Drug Deliveries by Air")
+ggplot(Zambia_Drugs_AirCharter, aes(x=demand, y=transportationcostperunit)) + geom_point() + geom_line()  + ylim(0,1)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Zambia Drug Deliveries by AirCharter")
+ggplot(Zambia_Drugs_Ocean, aes(x=demand, y=transportationcostperunit))  + geom_point() + geom_line()  + ylim(0,1)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Zambia Drug Deliveries by Ocean")
+ggplot(Zambia_Drugs_Truck, aes(x=demand, y=transportationcostperunit))  + geom_point() + geom_line()  + ylim(0,1) + theme(axis.text.x = element_text(size = 12)) + ggtitle("Zambia Drug Deliveries by Truck")
+# as recommended #USE AIR OR OCEAN
+ggplot(Zambia_Drugs_Air, aes(x=demand, y=transportationcostperunit)) + geom_point() + geom_line() + ylim(0,1)+ xlim(0,2000000)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Zambia Drug Deliveries by Air")
+ggplot(Zambia_Drugs_Ocean, aes(x=demand, y=transportationcostperunit))  + geom_point() + geom_line()  + ylim(0,1)+ xlim(0,2000000) + ggtitle("Zambia Drug Deliveries by Ocean")
+
+
+#Manufacturing Country
+ggplot(Zambia_Drugs_Air, aes(x=manufacturingcountry, y=transportationcostperunit)) + geom_boxplot() + ylim(0,1)+  ggtitle("Zambia Drug Deliveries by Air")
+ggplot(Zambia_Drugs_AirCharter, aes(x=manufacturingcountry, y=transportationcostperunit)) + geom_boxplot() + ylim(0,1)+  ggtitle("Zambia Drug Deliveries by AirCharter")
+ggplot(Zambia_Drugs_Ocean, aes(x=manufacturingcountry, y=transportationcostperunit))  + geom_boxplot() + ylim(0,1)+ ggtitle("Zambia Drug Deliveries by Ocean")
+ggplot(Zambia_Drugs_Truck, aes(x=manufacturingcountry, y=transportationcostperunit)) + geom_boxplot() + ylim(0,1) +  ggtitle("Zambia Drug Deliveries by Truck")
+```
+
+
+```{r}
+#Zambia Tests
+
+ggplot(Zambia_Tests, aes(x=shipmentmode, y=transportationcostperunit)) + geom_boxplot() + ylim(0,10)+ theme(axis.text.x = element_text(size = 12)) #USE AIR OR OCEAN
+#Vendor
+ggplot(Zambia_Tests_Air, aes(x=vendor, y=transportationcostperunit)) + geom_boxplot() + ylim(0,2)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Zambia Test Deliveries by Air")
+ggplot(Zambia_Tests_AirCharter, aes(x=vendor, y=transportationcostperunit)) + geom_boxplot() + ylim(0,2)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Zambia Test Deliveries by AirCharter")
+ggplot(Zambia_Tests_Ocean, aes(x=vendor, y=transportationcostperunit)) + geom_boxplot() + ylim(0,2)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Zambia Test Deliveries by Ocean")
+ggplot(Zambia_Tests_Truck, aes(x=vendor, y=transportationcostperunit)) + geom_boxplot() + ylim(0,2) + theme(axis.text.x = element_text(size = 12)) + ggtitle("Zambia Test Deliveries by Truck")
+
+#Lot size (boxplot does not visualize good)
+ggplot(Zambia_Tests_Air, aes(x=demand, y=transportationcostperunit)) + geom_boxplot() + ylim(0,1)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Zambia Test Deliveries by Air")
+ggplot(Zambia_Tests_AirCharter, aes(x=demand, y=transportationcostperunit)) + geom_boxplot() + ylim(0,1)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Zambia Test Deliveries by AirCharter")
+ggplot(Zambia_Tests_Ocean, aes(x=demand, y=transportationcostperunit)) + geom_boxplot() + ylim(0,1)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Zambia Test Deliveries by Ocean")
+ggplot(Zambia_Tests_Truck, aes(x=demand, y=transportationcostperunit)) + geom_boxplot() + ylim(0,1) + theme(axis.text.x = element_text(size = 12)) + ggtitle("Zambia Test Deliveries by Truck")
+# better plot
+ggplot(Zambia_Tests_Air, aes(x=demand, y=transportationcostperunit)) + geom_point() + geom_line() + ylim(0,1)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Zambia Test Deliveries by Air")
+ggplot(Zambia_Tests_AirCharter, aes(x=demand, y=transportationcostperunit)) + geom_point() + geom_line()  + ylim(0,1)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Zambia Test Deliveries by AirCharter")
+ggplot(Zambia_Tests_Ocean, aes(x=demand, y=transportationcostperunit))  + geom_point() + geom_line()  + ylim(0,1)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Zambia Test Deliveries by Ocean")
+ggplot(Zambia_Tests_Truck, aes(x=demand, y=transportationcostperunit))  + geom_point() + geom_line()  + ylim(0,1) + theme(axis.text.x = element_text(size = 12)) + ggtitle("Zambia Test Deliveries by Truck")
+# as recommended #USE AIR OR OCEAN
+ggplot(Zambia_Tests_Air, aes(x=demand, y=transportationcostperunit)) + geom_point() + geom_line() + ylim(0,1)+ xlim(0,2000000)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Zambia Test Deliveries by Air")
+ggplot(Zambia_Tests_Ocean, aes(x=demand, y=transportationcostperunit))  + geom_point() + geom_line()  + ylim(0,1)+ xlim(0,2000000) + ggtitle("Zambia Test Deliveries by Ocean")
+
+
+#Manufacturing Country
+ggplot(Zambia_Tests_Air, aes(x=manufacturingcountry, y=transportationcostperunit)) + geom_boxplot() + ylim(0,1)+  ggtitle("Zambia Test Deliveries by Air")
+ggplot(Zambia_Tests_AirCharter, aes(x=manufacturingcountry, y=transportationcostperunit)) + geom_boxplot() + ylim(0,1)+  ggtitle("Zambia Test Deliveries by AirCharter")
+ggplot(Zambia_Tests_Ocean, aes(x=manufacturingcountry, y=transportationcostperunit))  + geom_boxplot() + ylim(0,1)+ ggtitle("Zambia Test Deliveries by Ocean")
+ggplot(Zambia_Tests_Truck, aes(x=manufacturingcountry, y=transportationcostperunit)) + geom_boxplot() + ylim(0,1) +  ggtitle("Zambia Test Deliveries by Truck")
+```
+
+
+
+
+
+```{r}
+#Mozambique
+Mozambique_Drugs_Air <- filter(Mozambique_Drugs, Mozambique_Drugs$shipmentmode =="Air") # 207
+Mozambique_Drugs_AirCharter <- filter(Mozambique_Drugs, Mozambique_Drugs$shipmentmode =="Air Charter") # 0
+Mozambique_Drugs_Ocean <- filter(Mozambique_Drugs, Mozambique_Drugs$shipmentmode =="Ocean") # 0
+Mozambique_Drugs_Truck <- filter(Mozambique_Drugs, Mozambique_Drugs$shipmentmode =="Truck") # 337
+Mozambique_Tests_Air <- filter(Mozambique_Tests, Mozambique_Tests$shipmentmode =="Air") # 83
+Mozambique_Tests_AirCharter <- filter(Mozambique_Tests, Mozambique_Tests$shipmentmode =="Air Charter") # 0
+Mozambique_Tests_Ocean <- filter(Mozambique_Tests, Mozambique_Tests$shipmentmode =="Ocean") # 21
+Mozambique_Tests_Truck <- filter(Mozambique_Tests, Mozambique_Tests$shipmentmode =="Truck") # 0
+```
+
+
+```{r}
+#Mozambique drugs
+ggplot(Mozambique_Drugs, aes(x=shipmentmode, y=transportationcostperunit)) + geom_boxplot() + ylim(0,10)+ theme(axis.text.x = element_text(size = 12)) #USE AIR OR OCEAN
+#Vendor
+ggplot(Mozambique_Drugs_Air, aes(x=vendor, y=transportationcostperunit)) + geom_boxplot() + ylim(0,2)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Mozambique Drug Deliveries by Air")
+ggplot(Mozambique_Drugs_AirCharter, aes(x=vendor, y=transportationcostperunit)) + geom_boxplot() + ylim(0,2)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Mozambique Drug Deliveries by AirCharter")
+ggplot(Mozambique_Drugs_Ocean, aes(x=vendor, y=transportationcostperunit)) + geom_boxplot() + ylim(0,2)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Mozambique Drug Deliveries by Ocean")
+ggplot(Mozambique_Drugs_Truck, aes(x=vendor, y=transportationcostperunit)) + geom_boxplot() + ylim(0,2) + theme(axis.text.x = element_text(size = 12)) + ggtitle("Mozambique Drug Deliveries by Truck")
+
+#Lot size (boxplot doesn visualize good)
+ggplot(Mozambique_Drugs_Air, aes(x=demand, y=transportationcostperunit)) + geom_boxplot() + ylim(0,1)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Mozambique Drug Deliveries by Air")
+ggplot(Mozambique_Drugs_AirCharter, aes(x=demand, y=transportationcostperunit)) + geom_boxplot() + ylim(0,1)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Mozambique Drug Deliveries by AirCharter")
+ggplot(Mozambique_Drugs_Ocean, aes(x=demand, y=transportationcostperunit)) + geom_boxplot() + ylim(0,1)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Mozambique Drug Deliveries by Ocean")
+ggplot(Mozambique_Drugs_Truck, aes(x=demand, y=transportationcostperunit)) + geom_boxplot() + ylim(0,1) + theme(axis.text.x = element_text(size = 12)) + ggtitle("Mozambique Drug Deliveries by Truck")
+# better plot
+ggplot(Mozambique_Drugs_Air, aes(x=demand, y=transportationcostperunit)) + geom_point() + geom_line() + ylim(0,1)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Mozambique Drug Deliveries by Air")
+ggplot(Mozambique_Drugs_AirCharter, aes(x=demand, y=transportationcostperunit)) + geom_point() + geom_line()  + ylim(0,1)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Mozambique Drug Deliveries by AirCharter")
+ggplot(Mozambique_Drugs_Ocean, aes(x=demand, y=transportationcostperunit))  + geom_point() + geom_line()  + ylim(0,1)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Mozambique Drug Deliveries by Ocean")
+ggplot(Mozambique_Drugs_Truck, aes(x=demand, y=transportationcostperunit))  + geom_point() + geom_line()  + ylim(0,1) + theme(axis.text.x = element_text(size = 12)) + ggtitle("Mozambique Drug Deliveries by Truck")
+# as recommended #USE AIR OR OCEAN
+ggplot(Mozambique_Drugs_Air, aes(x=demand, y=transportationcostperunit)) + geom_point() + geom_line() + ylim(0,1)+ xlim(0,2000000)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Mozambique Drug Deliveries by Air")
+ggplot(Mozambique_Drugs_Ocean, aes(x=demand, y=transportationcostperunit))  + geom_point() + geom_line()  + ylim(0,1)+ xlim(0,2000000) + ggtitle("Mozambique Drug Deliveries by Ocean")
+
+
+#Manufacturing Country
+ggplot(Mozambique_Drugs_Air, aes(x=manufacturingcountry, y=transportationcostperunit)) + geom_boxplot() + ylim(0,1)+  ggtitle("Mozambique Drug Deliveries by Air")
+ggplot(Mozambique_Drugs_AirCharter, aes(x=manufacturingcountry, y=transportationcostperunit)) + geom_boxplot() + ylim(0,1)+  ggtitle("Mozambique Drug Deliveries by AirCharter")
+ggplot(Mozambique_Drugs_Ocean, aes(x=manufacturingcountry, y=transportationcostperunit))  + geom_boxplot() + ylim(0,1)+ ggtitle("Mozambique Drug Deliveries by Ocean")
+ggplot(Mozambique_Drugs_Truck, aes(x=manufacturingcountry, y=transportationcostperunit)) + geom_boxplot() + ylim(0,1) +  ggtitle("Mozambique Drug Deliveries by Truck")
+```
+
+
+```{r}
+#Mozambique Tests
+
+ggplot(Mozambique_Tests, aes(x=shipmentmode, y=transportationcostperunit)) + geom_boxplot() + ylim(0,10)+ theme(axis.text.x = element_text(size = 12)) #USE AIR OR OCEAN
+#Vendor
+ggplot(Mozambique_Tests_Air, aes(x=vendor, y=transportationcostperunit)) + geom_boxplot() + ylim(0,2)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Mozambique Test Deliveries by Air")
+ggplot(Mozambique_Tests_AirCharter, aes(x=vendor, y=transportationcostperunit)) + geom_boxplot() + ylim(0,2)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Mozambique Test Deliveries by AirCharter")
+ggplot(Mozambique_Tests_Ocean, aes(x=vendor, y=transportationcostperunit)) + geom_boxplot() + ylim(0,2)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Mozambique Test Deliveries by Ocean")
+ggplot(Mozambique_Tests_Truck, aes(x=vendor, y=transportationcostperunit)) + geom_boxplot() + ylim(0,2) + theme(axis.text.x = element_text(size = 12)) + ggtitle("Mozambique Test Deliveries by Truck")
+
+#Lot size (boxplot doesn visualize good)
+ggplot(Mozambique_Tests_Air, aes(x=demand, y=transportationcostperunit)) + geom_boxplot() + ylim(0,1)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Mozambique Test Deliveries by Air")
+ggplot(Mozambique_Tests_AirCharter, aes(x=demand, y=transportationcostperunit)) + geom_boxplot() + ylim(0,1)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Mozambique Test Deliveries by AirCharter")
+ggplot(Mozambique_Tests_Ocean, aes(x=demand, y=transportationcostperunit)) + geom_boxplot() + ylim(0,1)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Mozambique Test Deliveries by Ocean")
+ggplot(Mozambique_Tests_Truck, aes(x=demand, y=transportationcostperunit)) + geom_boxplot() + ylim(0,1) + theme(axis.text.x = element_text(size = 12)) + ggtitle("Mozambique Test Deliveries by Truck")
+# better plot
+ggplot(Mozambique_Tests_Air, aes(x=demand, y=transportationcostperunit)) + geom_point() + geom_line() + ylim(0,1)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Mozambique Test Deliveries by Air")
+ggplot(Mozambique_Tests_AirCharter, aes(x=demand, y=transportationcostperunit)) + geom_point() + geom_line()  + ylim(0,1)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Mozambique Test Deliveries by AirCharter")
+ggplot(Mozambique_Tests_Ocean, aes(x=demand, y=transportationcostperunit))  + geom_point() + geom_line()  + ylim(0,1)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Mozambique Test Deliveries by Ocean")
+ggplot(Mozambique_Tests_Truck, aes(x=demand, y=transportationcostperunit))  + geom_point() + geom_line()  + ylim(0,1) + theme(axis.text.x = element_text(size = 12)) + ggtitle("Mozambique Test Deliveries by Truck")
+# as recommended #USE AIR OR OCEAN
+ggplot(Mozambique_Tests_Air, aes(x=demand, y=transportationcostperunit)) + geom_point() + geom_line() + ylim(0,1)+ xlim(0,2000000)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Mozambique Test Deliveries by Air")
+ggplot(Mozambique_Tests_Ocean, aes(x=demand, y=transportationcostperunit))  + geom_point() + geom_line()  + ylim(0,1)+ xlim(0,2000000) + ggtitle("Mozambique Test Deliveries by Ocean")
+
+
+#Manufacturing Country
+ggplot(Mozambique_Tests_Air, aes(x=manufacturingcountry, y=transportationcostperunit)) + geom_boxplot() + ylim(0,1)+  ggtitle("Mozambique Test Deliveries by Air")
+ggplot(Mozambique_Tests_AirCharter, aes(x=manufacturingcountry, y=transportationcostperunit)) + geom_boxplot() + ylim(0,1)+  ggtitle("Mozambique Test Deliveries by AirCharter")
+ggplot(Mozambique_Tests_Ocean, aes(x=manufacturingcountry, y=transportationcostperunit))  + geom_boxplot() + ylim(0,1)+ ggtitle("Mozambique Test Deliveries by Ocean")
+ggplot(Mozambique_Tests_Truck, aes(x=manufacturingcountry, y=transportationcostperunit)) + geom_boxplot() + ylim(0,1) +  ggtitle("Mozambique Test Deliveries by Truck")
+```
+
+
+
+
+
+
+```{r}
+#Zimbabwe
+Zimbabwe_Drugs_Air <- filter(Zimbabwe_Drugs, Zimbabwe_Drugs$shipmentmode =="Air") # 106
+Zimbabwe_Drugs_AirCharter <- filter(Zimbabwe_Drugs, Zimbabwe_Drugs$shipmentmode =="Air Charter") # 18
+Zimbabwe_Drugs_Ocean <- filter(Zimbabwe_Drugs, Zimbabwe_Drugs$shipmentmode =="Ocean") # 3
+Zimbabwe_Drugs_Truck <- filter(Zimbabwe_Drugs, Zimbabwe_Drugs$shipmentmode =="Truck") # 360
+Zimbabwe_Tests_Air <- filter(Zimbabwe_Tests, Zimbabwe_Tests$shipmentmode =="Air") # 44
+Zimbabwe_Tests_AirCharter <- filter(Zimbabwe_Tests, Zimbabwe_Tests$shipmentmode =="Air Charter") # 0
+Zimbabwe_Tests_Ocean <- filter(Zimbabwe_Tests, Zimbabwe_Tests$shipmentmode =="Ocean") # 0
+Zimbabwe_Tests_Truck <- filter(Zimbabwe_Tests, Zimbabwe_Tests$shipmentmode =="Truck") # 7
+
+
+#Tanzania
+Tanzania_Drugs_Air <- filter(Tanzania_Drugs, Tanzania_Drugs$shipmentmode =="Air") # 197
+Tanzania_Drugs_AirCharter <- filter(Tanzania_Drugs, Tanzania_Drugs$shipmentmode =="Air Charter") # 1
+Tanzania_Drugs_Ocean <- filter(Tanzania_Drugs, Tanzania_Drugs$shipmentmode =="Ocean") # 6
+Tanzania_Drugs_Truck <- filter(Tanzania_Drugs, Tanzania_Drugs$shipmentmode =="Truck") # 193
+Tanzania_Tests_Air <- filter(Tanzania_Tests, Tanzania_Tests$shipmentmode =="Air") # 120
+Tanzania_Tests_AirCharter <- filter(Tanzania_Tests, Tanzania_Tests$shipmentmode =="Air Charter") #0
+Tanzania_Tests_Ocean <- filter(Tanzania_Tests, Tanzania_Tests$shipmentmode =="Ocean") # 0
+Tanzania_Tests_Truck <- filter(Tanzania_Tests, Tanzania_Tests$shipmentmode =="Truck") # 2
+
+```
+
+```{r}
+## Zimbabwe Drugs 
+
+
+ggplot(Zimbabwe_Drugs, aes(x=shipmentmode, y=transportationcostperunit)) + geom_boxplot() + ylim(0,10)+ theme(axis.text.x = element_text(size = 12)) #USE AIR OR OCEAN
+#Vendor
+ggplot(Zimbabwe_Drugs_Air, aes(x=vendor, y=transportationcostperunit)) + geom_boxplot() + ylim(0,2) + theme(axis.text.x = element_text(size = 8)) + ggtitle("Zimbabwe Drug Deliveries by Air")
+
+
+
+
+
+ggplot(Zimbabwe_Drugs_AirCharter, aes(x=vendor, y=transportationcostperunit)) + geom_boxplot() + ylim(0,2)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Zimbabwe Drug Deliveries by AirCharter")
+ggplot(Zimbabwe_Drugs_Ocean, aes(x=vendor, y=transportationcostperunit)) + geom_boxplot() + ylim(0,2)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Zimbabwe Drug Deliveries by Ocean")
+ggplot(Zimbabwe_Drugs_Truck, aes(x=vendor, y=transportationcostperunit)) + geom_boxplot() + ylim(0,2) + theme(axis.text.x = element_text(size = 12)) + ggtitle("Zimbabwe Drug Deliveries by Truck")
+
+#Lot size (boxplot doesn visualize good)
+
+# better plot
+ggplot(Zimbabwe_Drugs_Air, aes(x=demand, y=transportationcostperunit)) + geom_point() + geom_line() + ylim(0,1)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Zimbabwe Drug Deliveries by Air")
+ggplot(Zimbabwe_Drugs_AirCharter, aes(x=demand, y=transportationcostperunit)) + geom_point() + geom_line()  + ylim(0,1)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Zimbabwe Drug Deliveries by AirCharter")
+ggplot(Zimbabwe_Drugs_Ocean, aes(x=demand, y=transportationcostperunit))  + geom_point() + geom_line()  + ylim(0,1)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Zimbabwe Drug Deliveries by Ocean")
+ggplot(Zimbabwe_Drugs_Truck, aes(x=demand, y=transportationcostperunit))  + geom_point() + geom_line()  + ylim(0,1) + theme(axis.text.x = element_text(size = 12)) + ggtitle("Zimbabwe Drug Deliveries by Truck")
+# as recommended #USE AIR OR OCEAN
+ggplot(Zimbabwe_Drugs_Air, aes(x=demand, y=transportationcostperunit)) + geom_point() + geom_line() + ylim(0,1)+ xlim(0,2000000)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Zimbabwe Drug Deliveries by Air")
+
+
+
+#Manufacturing Country
+ggplot(Zimbabwe_Drugs_Air, aes(x=manufacturingcountry, y=transportationcostperunit)) + geom_boxplot() + ylim(0,1)+  ggtitle("Zimbabwe Drug Deliveries by Air")
+ggplot(Zimbabwe_Drugs_AirCharter, aes(x=manufacturingcountry, y=transportationcostperunit)) + geom_boxplot() + ylim(0,1)+  ggtitle("Zimbabwe Drug Deliveries by AirCharter")
+ggplot(Zimbabwe_Drugs_Ocean, aes(x=manufacturingcountry, y=transportationcostperunit))  + geom_boxplot() + ylim(0,1)+ ggtitle("Zimbabwe Drug Deliveries by Ocean")
+ggplot(Zimbabwe_Drugs_Truck, aes(x=manufacturingcountry, y=transportationcostperunit)) + geom_boxplot() + ylim(0,1) +  ggtitle("Zimbabwe Drug Deliveries by Truck")
+
+
+
+## Zimbabwe TEST 
+
+
+#Vendor
+ggplot(Zimbabwe_Tests_Air, aes(x=vendor, y=transportationcostperunit)) + geom_boxplot() + ylim(0,2)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Zimbabwe Tests Deliveries by Air")
+
+
+ggplot(Zimbabwe_Tests_Truck, aes(x=vendor, y=transportationcostperunit)) + geom_boxplot() + ylim(0,2) + theme(axis.text.x = element_text(size = 12)) + ggtitle("Zimbabwe Tests Deliveries by Truck")
+
+#Lot size (boxplot doesn visualize good)
+
+# better plot
+ggplot(Zimbabwe_Tests_Air, aes(x=demand, y=transportationcostperunit)) + geom_point() + geom_line() + ylim(0,1)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Zimbabwe Tests Deliveries by Air")
+
+ggplot(Zimbabwe_Tests_Ocean, aes(x=demand, y=transportationcostperunit))  + geom_point() + geom_line()  + ylim(0,1)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Zimbabwe Tests Deliveries by Ocean")
+ggplot(Zimbabwe_Tests_Truck, aes(x=demand, y=transportationcostperunit))  + geom_point() + geom_line()  + ylim(0,1) + theme(axis.text.x = element_text(size = 12)) + ggtitle("Zimbabwe Tests Deliveries by Truck")
+# as recommended #USE AIR OR OCEAN
+ggplot(Zimbabwe_Tests_Air, aes(x=demand, y=transportationcostperunit)) + geom_point() + geom_line() + ylim(0,1)+ xlim(0,2000000)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Zimbabwe Tests Deliveries by Air")
+
+
+
+
+#Manufacturing Country
+ggplot(Zimbabwe_Tests_Air, aes(x=manufacturingcountry, y=transportationcostperunit)) + geom_boxplot() + ylim(0,1)+  ggtitle("Zimbabwe Tests Deliveries by Air")
+
+
+ggplot(Zimbabwe_Tests_Truck, aes(x=manufacturingcountry, y=transportationcostperunit)) + geom_boxplot() + ylim(0,1) +  ggtitle("Zimbabwe Tests Deliveries by Truck")
+```
+
+
+
+
+
+```{r}
+#Tanzania
+
+ggplot(Tanzania_Tests, aes(x=shipmentmode, y=transportationcostperunit)) + geom_boxplot() + ylim(0,10)+ theme(axis.text.x = element_text(size = 12)) #USE AIR OR OCEAN
+#Vendor
+ggplot(Tanzania_Drugs_Air, aes(x=vendor, y=transportationcostperunit)) + geom_boxplot() + ylim(0,2)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Tanzania Drug Deliveries by Air")
+ggplot(Tanzania_Drugs_AirCharter, aes(x=vendor, y=transportationcostperunit)) + geom_boxplot() + ylim(0,2)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Tanzania Drug Deliveries by AirCharter")
+ggplot(Tanzania_Drugs_Ocean, aes(x=vendor, y=transportationcostperunit)) + geom_boxplot() + ylim(0,2)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Tanzania Drug Deliveries by Ocean")
+ggplot(Tanzania_Drugs_Truck, aes(x=vendor, y=transportationcostperunit)) + geom_boxplot() + ylim(0,2) + theme(axis.text.x = element_text(size = 12)) + ggtitle("Tanzania Drug Deliveries by Truck")
+
+#Lot size (boxplot doesn visualize good)
+ggplot(Tanzania_Drugs_Air, aes(x=demand, y=transportationcostperunit)) + geom_boxplot() + ylim(0,1)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Tanzania Drug Deliveries by Air")
+ggplot(Tanzania_Drugs_AirCharter, aes(x=demand, y=transportationcostperunit)) + geom_boxplot() + ylim(0,1)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Tanzania Drug Deliveries by AirCharter")
+ggplot(Tanzania_Drugs_Ocean, aes(x=demand, y=transportationcostperunit)) + geom_boxplot() + ylim(0,1)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Tanzania Drug Deliveries by Ocean")
+ggplot(Tanzania_Drugs_Truck, aes(x=demand, y=transportationcostperunit)) + geom_boxplot() + ylim(0,1) + theme(axis.text.x = element_text(size = 12)) + ggtitle("Tanzania Drug Deliveries by Truck")
+# better plot
+ggplot(Tanzania_Drugs_Air, aes(x=demand, y=transportationcostperunit)) + geom_point() + geom_line() + ylim(0,1)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Tanzania Drug Deliveries by Air")
+ggplot(Tanzania_Drugs_AirCharter, aes(x=demand, y=transportationcostperunit)) + geom_point() + geom_line()  + ylim(0,1)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Tanzania Drug Deliveries by AirCharter")
+ggplot(Tanzania_Drugs_Ocean, aes(x=demand, y=transportationcostperunit))  + geom_point() + geom_line()  + ylim(0,1)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Tanzania Drug Deliveries by Ocean")
+ggplot(Tanzania_Drugs_Truck, aes(x=demand, y=transportationcostperunit))  + geom_point() + geom_line()  + ylim(0,1) + theme(axis.text.x = element_text(size = 12)) + ggtitle("Tanzania Drug Deliveries by Truck")
+# as recommended #USE AIR OR OCEAN
+ggplot(Tanzania_Drugs_Air, aes(x=demand, y=transportationcostperunit)) + geom_point() + geom_line() + ylim(0,1)+ xlim(0,2000000)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Tanzania Drug Deliveries by Air")
+ggplot(Tanzania_Drugs_Ocean, aes(x=demand, y=transportationcostperunit))  + geom_point() + geom_line()  + ylim(0,1)+ xlim(0,2000000) + ggtitle("Tanzania Drug Deliveries by Ocean")
+
+
+#i wanted to see at which point of demand the mean cost per  unit are small, zooming/adjust x-axis does not work
+#ggplot(Tanzania_Drugs_Ocean, aes(x=demand, y=transportationcostperunit))  + geom_point() + geom_line()  + ylim(0,1) + xlim(0,1000)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Tanzania Drug Deliveries by Ocean") + scale_y_continuous(limits=c(0,1000), breaks=seq(0,1000, by = 10))
+
+#Manufacturing Country
+ggplot(Tanzania_Drugs_Air, aes(x=manufacturingcountry, y=transportationcostperunit)) + geom_boxplot() + ylim(0,1)+  ggtitle("Tanzania Drug Deliveries by Air")
+ggplot(Tanzania_Drugs_AirCharter, aes(x=manufacturingcountry, y=transportationcostperunit)) + geom_boxplot() + ylim(0,1)+  ggtitle("Tanzania Drug Deliveries by AirCharter")
+ggplot(Tanzania_Drugs_Ocean, aes(x=manufacturingcountry, y=transportationcostperunit))  + geom_boxplot() + ylim(0,1)+ ggtitle("Tanzania Drug Deliveries by Ocean")
+ggplot(Tanzania_Drugs_Truck, aes(x=manufacturingcountry, y=transportationcostperunit)) + geom_boxplot() + ylim(0,1) +  ggtitle("Tanzania Drug Deliveries by Truck")
+
+
+
+## Tanzania Tests
+
+
+ggplot(Tanzania_Tests, aes(x=shipmentmode, y=transportationcostperunit)) + geom_boxplot() + ylim(0,10)+ theme(axis.text.x = element_text(size = 12)) #USE AIR OR OCEAN
+#Vendor
+ggplot(Tanzania_Tests_Air, aes(x=vendor, y=transportationcostperunit)) + geom_boxplot() + ylim(0,2)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Tanzania Tests Deliveries by Air")
+ggplot(Tanzania_Tests_AirCharter, aes(x=vendor, y=transportationcostperunit)) + geom_boxplot() + ylim(0,2)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Tanzania Tests Deliveries by AirCharter")
+ggplot(Tanzania_Tests_Ocean, aes(x=vendor, y=transportationcostperunit)) + geom_boxplot() + ylim(0,2)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Tanzania Drug Deliveries by Ocean")
+ggplot(Tanzania_Tests_Truck, aes(x=vendor, y=transportationcostperunit)) + geom_boxplot() + ylim(0,2) + theme(axis.text.x = element_text(size = 12)) + ggtitle("Tanzania Tests Deliveries by Truck")
+
+#Lot size (boxplot doesn visualize good)
+ggplot(Tanzania_Tests_Air, aes(x=demand, y=transportationcostperunit)) + geom_boxplot() + ylim(0,1)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Tanzania Tests Deliveries by Air")
+ggplot(Tanzania_Tests_AirCharter, aes(x=demand, y=transportationcostperunit)) + geom_boxplot() + ylim(0,1)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Tanzania Tests Deliveries by AirCharter")
+ggplot(Tanzania_Tests_Ocean, aes(x=demand, y=transportationcostperunit)) + geom_boxplot() + ylim(0,1)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Tanzania Tests Deliveries by Ocean")
+ggplot(Tanzania_Tests_Truck, aes(x=demand, y=transportationcostperunit)) + geom_boxplot() + ylim(0,1) + theme(axis.text.x = element_text(size = 12)) + ggtitle("Tanzania Tests Deliveries by Truck")
+# better plot
+ggplot(Tanzania_Tests_Air, aes(x=demand, y=transportationcostperunit)) + geom_point() + geom_line() + ylim(0,1)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Tanzania Tests Deliveries by Air")
+ggplot(Tanzania_Tests_AirCharter, aes(x=demand, y=transportationcostperunit)) + geom_point() + geom_line()  + ylim(0,1)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Tanzania Tests Deliveries by AirCharter")
+ggplot(Tanzania_Tests_Ocean, aes(x=demand, y=transportationcostperunit))  + geom_point() + geom_line()  + ylim(0,1)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Tanzania Tests Deliveries by Ocean")
+ggplot(Tanzania_Tests_Truck, aes(x=demand, y=transportationcostperunit))  + geom_point() + geom_line()  + ylim(0,1) + theme(axis.text.x = element_text(size = 12)) + ggtitle("Tanzania Tests Deliveries by Truck")
+# as recommended #USE AIR OR OCEAN
+ggplot(Tanzania_Tests_Air, aes(x=demand, y=transportationcostperunit)) + geom_point() + geom_line() + ylim(0,1)+ xlim(0,2000000)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Tanzania Tests Deliveries by Air")
+ggplot(Tanzania_Tests_Ocean, aes(x=demand, y=transportationcostperunit))  + geom_point() + geom_line()  + ylim(0,1)+ xlim(0,2000000) + ggtitle("Tanzania Tests Deliveries by Ocean")
+
+
+#i wanted to see at which point of demand the mean cost per  unit are small, zooming/adjust x-axis does not work
+#ggplot(Tanzania_Drugs_Ocean, aes(x=demand, y=transportationcostperunit))  + geom_point() + geom_line()  + ylim(0,1) + xlim(0,1000)+ theme(axis.text.x = element_text(size = 12)) + ggtitle("Tanzania Drug Deliveries by Ocean") + scale_y_continuous(limits=c(0,1000), breaks=seq(0,1000, by = 10))
+
+#Manufacturing Country
+ggplot(Tanzania_Tests_Air, aes(x=manufacturingcountry, y=transportationcostperunit)) + geom_boxplot() + ylim(0,1)+  ggtitle("Tanzania Tests Deliveries by Air")
+ggplot(Tanzania_Tests_AirCharter, aes(x=manufacturingcountry, y=transportationcostperunit)) + geom_boxplot() + ylim(0,1)+  ggtitle("Tanzania Tests Deliveries by AirCharter")
+ggplot(Tanzania_Tests_Ocean, aes(x=manufacturingcountry, y=transportationcostperunit))  + geom_boxplot() + ylim(0,1)+ ggtitle("Tanzania Tests Deliveries by Ocean")
+ggplot(Tanzania_Tests_Truck, aes(x=manufacturingcountry, y=transportationcostperunit)) + geom_boxplot() + ylim(0,1) +  ggtitle("Tanzania Tests Deliveries by Truck")
+
+```
+
+
+
+
+
+
+
